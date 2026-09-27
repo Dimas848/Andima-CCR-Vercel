@@ -24,7 +24,7 @@ export interface CustomDropdownProps {
 
 export const CustomDropdown: React.FC<CustomDropdownProps> = ({
   label,
-  placeholder = "Dropdown testing miliki C1",
+  placeholder = "Dropdown testing miliki D1",
   categoryTitle = "TESTING",
   categoryBadge = "3 Active",
   items = [
@@ -77,8 +77,9 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`w-full bg-white border ${isOpen ? "border-slate-800 ring-1 ring-slate-800" : "border-slate-300 hover:border-slate-400"
-          } rounded-lg px-4 py-3 text-left flex items-center justify-between shadow-xs transition-all duration-150`}
+        className={`w-full bg-white border ${
+          isOpen ? "border-slate-800 ring-1 ring-slate-800" : "border-slate-300 hover:border-slate-400"
+        } rounded-lg px-4 py-3 text-left flex items-center justify-between shadow-xs transition-all duration-150`}
       >
         <span className="text-[15px] font-semibold text-slate-900 truncate">
           {placeholder}
@@ -128,10 +129,11 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
                   key={item.id}
                   type="button"
                   onClick={() => handleSelect(item)}
-                  className={`w-full px-4 py-2.5 text-left flex items-center justify-between text-sm transition-colors ${isSelected
+                  className={`w-full px-4 py-2.5 text-left flex items-center justify-between text-sm transition-colors ${
+                    isSelected
                       ? "bg-[#ECEEF2] text-slate-900 font-semibold"
                       : "text-slate-800 hover:bg-slate-50 font-semibold"
-                    }`}
+                  }`}
                 >
                   <div className="flex items-center gap-2.5">
                     {isSelected ? (
@@ -151,8 +153,9 @@ export const CustomDropdown: React.FC<CustomDropdownProps> = ({
 
                   {item.subLabel && (
                     <span
-                      className={`text-xs font-normal ${isSelected ? "text-slate-700 font-medium" : "text-slate-600"
-                        }`}
+                      className={`text-xs font-normal ${
+                        isSelected ? "text-slate-700 font-medium" : "text-slate-600"
+                      }`}
                     >
                       {item.subLabel}
                     </span>

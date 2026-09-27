@@ -100,7 +100,7 @@ export const UserInput = forwardRef<HTMLInputElement, UserInputProps>(
       disabled = false,
       value,
       defaultValue,
-      placeholder = "User Input C1",
+      placeholder = "User Input D1",
       className = "",
       containerClassName = "",
       onFocus,
