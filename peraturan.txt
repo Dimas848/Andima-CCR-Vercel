@@ -1,0 +1,2 @@
+Peraturan:
+1. nanti setiap mau ngepush bikin brach dulu / tiket sendiri dengan format [grup-nomeralur-namafitur] cth D4-001-login
