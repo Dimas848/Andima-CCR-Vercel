@@ -84,7 +84,7 @@ export function CustomTable<T extends Record<string, any>>({
       {/* Table Content Wrapper */}
       <div className="w-full overflow-x-auto">
         <table className="w-full text-left border-collapse">
-          {/* Table Header matching C1 / Pagination dark slate aesthetic */}
+          {/* Table Header matching D1 / Pagination dark slate aesthetic */}
           <thead>
             <tr className="bg-[#F8FAFC] border-b border-slate-200">
               {selectable && (
