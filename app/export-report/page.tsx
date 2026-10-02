@@ -470,7 +470,7 @@ export default function ExportReportPage() {
             <div>
               <h3 className="text-sm font-bold text-slate-900">Proses Generate</h3>
               <p className="text-[11px] text-slate-400">
-                Laporan disusun di latar belakang secara asinkron (TR-2909-005)[cite: 6]
+                Laporan disusun di latar belakang secara asinkron (TR-2909-005)
               </p>
 
               {/* Stepper 4 Tahap */}
