@@ -556,13 +556,13 @@ export default function ExportReportPage() {
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 shadow-inner">
                 <Download className="h-6 w-6 text-white" />
               </div>
-              <h3 className="mt-3 text-base font-bold text-white">Cloud Vault Storage</h3>
+              <h3 className="mt-3 text-base font-bold text-white">Siap Untuk Diunduh</h3>
               <p className="mt-1 text-[11px] text-sky-100 leading-relaxed max-w-[210px]">
-                Tautan unduhan aman berenkripsi AES-256 (Masa aktif 24 jam)[cite: 6].
+                Tautan unduhan aman berenkripsi AES-256 (Masa aktif 24 jam).
               </p>
             </div>
 
-            <button
+            <button 
               onClick={handleDownloadExcel}
               className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#18C7C0] py-2.5 text-xs font-bold text-slate-950 shadow transition hover:bg-[#14b2ab] active:scale-95"
             >
