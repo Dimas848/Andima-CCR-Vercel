@@ -401,7 +401,7 @@ export default function ExportReportPage() {
                   onChange={(e) => setSertakanSummary(e.target.checked)}
                   className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
                 />
-                Sertakan summary (Sheet 1)[cite: 6]
+                Sertakan summary
               </label>
 
               <label
@@ -418,7 +418,7 @@ export default function ExportReportPage() {
                   onChange={(e) => setSertakanException(e.target.checked)}
                   className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
                 />
-                Sertakan exception (Sheet 3)[cite: 6]
+                Sertakan exception
               </label>
 
               <label
@@ -458,7 +458,7 @@ export default function ExportReportPage() {
             </div>
 
             <p className="mt-4 text-[10px] leading-relaxed text-slate-500">
-              Sinkronisasi real-time dengan basis data Supabase `c2_cost_transactions`[cite: 1].
+              Sinkronisasi real-time dengan basis data Supabase `c2_cost_transactions`.
             </p>
           </div>
         </div>

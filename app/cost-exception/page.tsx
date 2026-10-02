@@ -506,7 +506,7 @@ export default function CostExceptionPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {/* Search Bar */}
+              {/* Search Bar - Warna teks dan placeholder dipaksa kontras gelap */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
@@ -517,7 +517,7 @@ export default function CostExceptionPage() {
                     setSearch(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="w-56 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                  className="w-56 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-900 placeholder:text-slate-400 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
                 />
               </div>
 
@@ -776,7 +776,7 @@ export default function CostExceptionPage() {
                 </div>
               </div>
 
-              {/* Form Input Catatan Resolusi */}
+              {/* Form Input Catatan Resolusi - Warna font dan placeholder dipaksa gelap */}
               <div className="mt-4">
                 <label className="block text-xs font-bold text-slate-700">
                   Catatan Justifikasi / Audit Trail (Resolution Notes)
@@ -786,7 +786,7 @@ export default function CostExceptionPage() {
                   value={inputResolutionNotes}
                   onChange={(e) => setInputResolutionNotes(e.target.value)}
                   placeholder="Contoh: Bukti invoice fisik telah diverifikasi oleh tim Billing dan disetujui untuk ditutup..."
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-900 placeholder:text-slate-400 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
                 />
               </div>
 
@@ -851,7 +851,7 @@ export default function CostExceptionPage() {
                     type="number"
                     value={ruleBudgetVariance}
                     onChange={(e) => setRuleBudgetVariance(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
                   />
                 </div>
 
@@ -861,15 +861,15 @@ export default function CostExceptionPage() {
                     type="number"
                     value={ruleHighCostLimit}
                     onChange={(e) => setRuleHighCostLimit(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
                   />
                 </div>
 
                 <div className="rounded-lg bg-sky-50 p-3 text-[11px] text-sky-800 border border-sky-100">
                   <p className="font-bold">Ketentuan Sistem Otomatis:</p>
                   <p className="mt-0.5">
-                    • MISSING_EVIDENCE aktif jika kuitansi kosong[cite: 1, 11].<br />
-                    • JOB_NOT_FOUND otomatis aktif jika tidak ada referensi job valid di master operasional[cite: 1, 11].
+                    • MISSING_EVIDENCE aktif jika kuitansi kosong.<br />
+                    • JOB_NOT_FOUND otomatis aktif jika tidak ada referensi job valid di master operasional.
                   </p>
                 </div>
               </div>
