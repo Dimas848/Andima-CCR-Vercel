@@ -6,6 +6,7 @@ import {
   Bell,
   CalendarDays,
   Lock,
+  Unlock,
   Download,
   Database,
   Inbox,
@@ -17,15 +18,14 @@ import {
   ArrowRight,
   X,
   Loader2,
-  ShieldAlert,
   Clock,
+  ShieldCheck,
+  Check,
 } from "lucide-react";
 
-import sidebar from "@/components/sidebar";
+import Sidebar from "@/components/sidebar";
+import CustomDropdown, { DropdownOption } from "../dashboard/CustomDropdown";
 import { supabase } from "@/lib/supabase";
-
-// Alias huruf kapital untuk validitas sintaks JSX React
-const Sidebar = sidebar;
 
 interface ActivityRow {
   tahap: number;
@@ -246,35 +246,66 @@ function NotificationPopover({
 // =========================================================================
 export default function MonthlyClosingPage() {
   const router = useRouter();
-  const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
 
+  // Stempel Waktu Dinamis
   const liveTime1 = useMemo(() => formatLiveTimestamp(new Date(), 90), []);
   const liveTime2 = useMemo(() => formatLiveTimestamp(new Date(), 45), []);
   const liveTime3 = useMemo(() => formatLiveTimestamp(new Date(), 10), []);
   const liveTime4 = useMemo(() => formatLiveTimestamp(new Date(), 5), []);
 
-  // State Dinamis Murni
+  // State Transaksi & Status
   const [transactions, setTransactions] = useState<any[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<string>("September 2026");
+  const [dynamicPeriodOptions, setDynamicPeriodOptions] = useState<DropdownOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [filterKategori, setFilterKategori] = useState("Semua Aktivitas");
 
-  // Tarik Data Nyata dari Supabase View c2_cost_transactions
+  // State Penguncian Periode Manual & Konfirmasi Modal
+  const [isPeriodLockedManual, setIsPeriodLockedManual] = useState<boolean>(false);
+  const [isLockModalOpen, setIsLockModalOpen] = useState<boolean>(false);
+  const [approvalNotes, setApprovalNotes] = useState<string>("");
+  const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Tarik Data Nyata dari Supabase View c2_cost_transactions & Status Penguncian
   const fetchClosingData = useCallback(async () => {
     try {
       setIsSyncing(true);
-      const { data, error } = await supabase
-        .from("c2_cost_transactions")
-        .select("*")
-        .order("created_at", { ascending: false });
+      const [txRes, batchRes] = await Promise.all([
+        supabase.from("c2_cost_transactions").select("*").order("created_at", { ascending: false }),
+        supabase.from("c2_cost_ingestion_batches").select("period_month, status").order("created_at", { ascending: false }),
+      ]);
 
-      if (error || !data) {
+      if (txRes.error || !txRes.data) {
         setTransactions([]);
         return;
       }
 
-      setTransactions(data);
+      setTransactions(txRes.data);
+
+      // Ekstrak Pilihan Periode dari Database
+      const uniquePeriods = Array.from(new Set(txRes.data.map((t) => t.period_month).filter(Boolean)));
+      if (uniquePeriods.length > 0) {
+        setDynamicPeriodOptions(uniquePeriods.map((p) => ({ value: p, label: p })));
+        if (!selectedPeriod || !uniquePeriods.includes(selectedPeriod)) {
+          setSelectedPeriod(uniquePeriods[0]);
+        }
+      } else {
+        setDynamicPeriodOptions([
+          { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
+          { value: getDynamicPeriod(1), label: getDynamicPeriod(1) },
+        ]);
+      }
+
+      // Periksa Apakah Periode Sudah Terkunci di Database atau LocalStorage
+      const isLockedInDb = batchRes.data?.some(
+        (b) => b.period_month === selectedPeriod && (b.status === "LOCKED" || b.status === "CLOSED")
+      );
+      const isLockedLocal = typeof window !== "undefined" && localStorage.getItem(`c2_locked_${selectedPeriod}`) === "true";
+      setIsPeriodLockedManual(Boolean(isLockedInDb || isLockedLocal));
+
     } catch (err) {
       console.error("Gagal menarik data transaksi closing:", err);
       setTransactions([]);
@@ -282,21 +313,30 @@ export default function MonthlyClosingPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, []);
+  }, [selectedPeriod]);
 
   useEffect(() => {
     fetchClosingData();
   }, [fetchClosingData]);
 
-  // Kalkulasi Metrik Dinamis
+  // Transaksi Terfilter Sesuai Periode Terpilih
+  const filteredPeriodTransactions = useMemo(() => {
+    if (!selectedPeriod) return transactions;
+    return transactions.filter((t) => t.period_month === selectedPeriod);
+  }, [transactions, selectedPeriod]);
+
+  // Kalkulasi Metrik Dinamis Berdasarkan Data Database
   const metrics = useMemo(() => {
-    const totalCount = transactions.length;
-    const sumActual = transactions.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
-    const anomalies = transactions.filter(
+    const totalCount = filteredPeriodTransactions.length;
+    const sumActual = filteredPeriodTransactions.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
+    const anomalies = filteredPeriodTransactions.filter(
       (t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence || !t.is_job_matched
     );
     const resolvedCount = anomalies.filter((t) => t.status === "Selesai").length;
     const pendingCount = anomalies.length - resolvedCount;
+    const isFullyResolved = totalCount > 0 && pendingCount === 0;
+
+    const isLocked = isPeriodLockedManual || (totalCount > 0 && isFullyResolved);
 
     return {
       totalRecords: totalCount,
@@ -304,19 +344,19 @@ export default function MonthlyClosingPage() {
       exceptionsCount: anomalies.length,
       resolvedCount,
       pendingCount,
-      isFullyResolved: totalCount > 0 && pendingCount === 0,
-      approvalStatus: totalCount > 0 && pendingCount === 0 ? "Disetujui" : totalCount > 0 ? "Review Berjalan" : "Belum Ada Data",
-      isLocked: totalCount > 0 && pendingCount === 0,
+      isFullyResolved,
+      approvalStatus: isLocked ? "Disetujui" : totalCount > 0 ? "Review Berjalan" : "Belum Ada Data",
+      isLocked,
     };
-  }, [transactions]);
+  }, [filteredPeriodTransactions, isPeriodLockedManual]);
 
-  // Evaluasi Checklist Otomatis Berdasarkan Status Data
+  // Evaluasi 6 Checklist Otomatis
   const checklistEvaluated = useMemo(() => {
-    const hasData = transactions.length > 0;
+    const hasData = filteredPeriodTransactions.length > 0;
     const noPendingExceptions = hasData && metrics.pendingCount === 0;
-    const allEvidencePresent = hasData && !transactions.some((t) => !t.has_evidence);
+    const allEvidencePresent = hasData && !filteredPeriodTransactions.some((t) => !t.has_evidence);
     const budgetReconciled = hasData;
-    const approved = metrics.isFullyResolved;
+    const approved = metrics.isLocked;
     const locked = metrics.isLocked;
 
     const items = [
@@ -332,17 +372,70 @@ export default function MonthlyClosingPage() {
     const percentage = hasData ? Math.round((completed / items.length) * 100) : 0;
 
     return { items, completed, percentage };
-  }, [transactions, metrics]);
+  }, [filteredPeriodTransactions, metrics]);
 
-  // Aktivitas Dinamis
+  // Eksekusi Kunci / Pengesahan Periode ke Supabase
+  const handleLockPeriod = async () => {
+    try {
+      setIsActionLoading(true);
+
+      // 1. Perbarui status batch di c2_cost_ingestion_batches
+      await supabase
+        .from("c2_cost_ingestion_batches")
+        .update({ status: "LOCKED" })
+        .eq("period_month", selectedPeriod);
+
+      // 2. Simpan status di localStorage sebagai persistensi instan
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`c2_locked_${selectedPeriod}`, "true");
+      }
+
+      setIsPeriodLockedManual(true);
+      setIsLockModalOpen(false);
+      setToastMessage(`Periode ${selectedPeriod} berhasil disetujui dan dikunci secara permanen!`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error("Gagal mengunci periode:", err);
+      alert(`Gagal menyimpan penguncian: ${err.message}`);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Batalkan Penguncian Periode (Unlock)
+  const handleUnlockPeriod = async () => {
+    try {
+      setIsActionLoading(true);
+
+      await supabase
+        .from("c2_cost_ingestion_batches")
+        .update({ status: "COMMITTED" })
+        .eq("period_month", selectedPeriod);
+
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(`c2_locked_${selectedPeriod}`);
+      }
+
+      setIsPeriodLockedManual(false);
+      setToastMessage(`Penguncian periode ${selectedPeriod} telah dibuka kembali.`);
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error("Gagal membuka kunci periode:", err);
+      alert(`Gagal memperbarui: ${err.message}`);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Aktivitas Dinamis Sesuai Tahapan Audit Trail
   const dynamicActivities: ActivityRow[] = useMemo(() => [
     {
       tahap: 1,
       aktivitas: "Validasi data & duplikasi",
       pelaksana: "Finance Ops",
       kategori: "Validasi",
-      status: transactions.length > 0 ? "Selesai" : "Menunggu",
-      statusBadgeClass: transactions.length > 0 ? "bg-[#ecfdf5] text-[#059669]" : "bg-slate-100 text-slate-500",
+      status: filteredPeriodTransactions.length > 0 ? "Selesai" : "Menunggu",
+      statusBadgeClass: filteredPeriodTransactions.length > 0 ? "bg-[#ecfdf5] text-[#059669]" : "bg-slate-100 text-slate-500",
       waktu: liveTime1,
     },
     {
@@ -359,20 +452,20 @@ export default function MonthlyClosingPage() {
       aktivitas: "Persetujuan total cost",
       pelaksana: "Head of Finance",
       kategori: "Approval",
-      status: metrics.isFullyResolved ? "Disetujui" : "Pending",
-      statusBadgeClass: metrics.isFullyResolved ? "bg-[#ecfdf5] text-[#059669]" : "bg-amber-50 text-amber-700",
+      status: metrics.isLocked ? "Disetujui" : "Pending",
+      statusBadgeClass: metrics.isLocked ? "bg-[#ecfdf5] text-[#059669]" : "bg-amber-50 text-amber-700",
       waktu: liveTime3,
     },
     {
       tahap: 4,
       aktivitas: "Penguncian periode",
-      pelaksana: "Sistem",
+      pelaksana: "Sistem CCR2",
       kategori: "Sistem",
       status: metrics.isLocked ? "Terkunci" : "Terbuka",
       statusBadgeClass: metrics.isLocked ? "bg-[#e0f2fe] text-[#0284c7]" : "bg-slate-100 text-slate-600",
       waktu: liveTime4,
     },
-  ], [transactions.length, metrics, liveTime1, liveTime2, liveTime3, liveTime4]);
+  ], [filteredPeriodTransactions.length, metrics, liveTime1, liveTime2, liveTime3, liveTime4]);
 
   // Filter Aktivitas
   const filteredActivities = useMemo(() => {
@@ -383,7 +476,7 @@ export default function MonthlyClosingPage() {
   // Ringkasan Notifikasi Dinamis
   const notificationCategories = useMemo(() => {
     const list = [];
-    const overBudget = transactions.filter((r) => Number(r.variance || 0) > 0);
+    const overBudget = filteredPeriodTransactions.filter((r) => Number(r.variance || 0) > 0);
     if (overBudget.length > 0) {
       list.push({
         title: "Over Budget",
@@ -398,7 +491,7 @@ export default function MonthlyClosingPage() {
       });
     }
 
-    const highCost = transactions.filter((r) => Number(r.actual_cost || 0) >= 50000000);
+    const highCost = filteredPeriodTransactions.filter((r) => Number(r.actual_cost || 0) >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -413,7 +506,7 @@ export default function MonthlyClosingPage() {
       });
     }
 
-    const missingEvidence = transactions.filter((r) => !r.has_evidence);
+    const missingEvidence = filteredPeriodTransactions.filter((r) => !r.has_evidence);
     if (missingEvidence.length > 0) {
       list.push({
         title: "Missing Evidence",
@@ -429,16 +522,16 @@ export default function MonthlyClosingPage() {
     }
 
     return list;
-  }, [transactions]);
+  }, [filteredPeriodTransactions]);
 
-  // Unduh Berita Acara
+  // Unduh Berita Acara Resmi
   const handleDownloadBeritaAcara = () => {
     const textContent = `================================================================================
 BERITA ACARA PENUTUPAN BUKU BIAYA OPERASIONAL (MONTHLY COST CLOSING)
 PT ANDIMA TRANSPORTINDO - TAHUN BUKU 2026
 ================================================================================
-Nomor Dokumen  : BA-CCR2/2026/09/001
-Periode Buku   : ${currentLivePeriod}
+Nomor Dokumen  : BA-CCR2/2026/${selectedPeriod.replace(/\s+/g, "/")}/001
+Periode Buku   : ${selectedPeriod}
 Status Periode : ${metrics.isLocked ? "TERKUNCI (CLOSED / READ-ONLY)" : "TERBUKA (IN PROGRESS)"}
 Otorisator     : Budi Santoso, Head of Finance
 Waktu Eksekusi : ${liveTime3} WIB
@@ -449,15 +542,18 @@ Waktu Eksekusi : ${liveTime3} WIB
 - Transaksi Exception    : ${metrics.exceptionsCount} Item (${metrics.resolvedCount} Selesai · ${metrics.pendingCount} Menunggu)
 - Status Pengesahan      : ${metrics.approvalStatus}
 
-2. LEMBAR KONTROL AUDIT:
-${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join("\n")}
+2. LEMBAR KONTROL AUDIT (CHECKLIST CLOSING):
+${checklistEvaluated.items.map((i) => `[${i.done ? "✓" : " "}] ${i.label}`).join("\n")}
+
+3. CATATAN OTORISASI:
+${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid untuk penutupan buku."}
 ================================================================================`;
 
     const blob = new Blob([textContent], { type: "text/plain;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `Berita_Acara_Closing_PT_Andima_${currentLivePeriod.replace(/\s+/g, "_")}.txt`);
+    link.setAttribute("download", `Berita_Acara_Closing_PT_Andima_${selectedPeriod.replace(/\s+/g, "_")}.txt`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -468,16 +564,16 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
       {/* Sidebar Navigasi */}
       <Sidebar />
 
-      {/* Konten Utama: ml-64 min-w-0 agar tidak tertimpa sidebar fixed */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
-        {/* Header Dasbor */}
+      {/* Konten Utama */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto">
+        {/* Header Modul */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
               Monthly Closing & Approval
             </h1>
             <p className="mt-0.5 text-xs text-slate-400">
-              Penutupan dan persetujuan cost periode {currentLivePeriod}
+              Penutupan dan persetujuan cost periode {selectedPeriod}
             </p>
           </div>
 
@@ -521,7 +617,7 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
               <NotificationPopover
                 isOpen={isNotificationOpen}
                 onClose={() => setIsNotificationOpen(false)}
-                periode={currentLivePeriod}
+                periode={selectedPeriod}
                 isLoading={isLoading}
                 totalExceptions={metrics.exceptionsCount}
                 categories={notificationCategories}
@@ -531,23 +627,48 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
             {/* Badge Periode Aktif */}
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
               <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
-              {currentLivePeriod}
+              {selectedPeriod}
             </span>
           </div>
         </div>
 
-        {/* Banner Status Penutupan Buku (dengan Skeleton) */}
+        {/* Toast Feedback Notifikasi */}
+        {toastMessage && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <Check className="h-5 w-5 text-emerald-600" />
+              <p className="text-xs font-bold text-emerald-950">{toastMessage}</p>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-950">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Pilihan Periode Closing */}
+        <div className="mt-4 flex items-center gap-3">
+          <div className="w-56">
+            <CustomDropdown
+              label="Pilih Periode Closing"
+              value={selectedPeriod}
+              options={dynamicPeriodOptions}
+              onChange={setSelectedPeriod}
+            />
+          </div>
+        </div>
+
+        {/* Banner Status Penutupan Buku */}
         {isLoading ? (
-          <div className="mt-5 h-20 rounded-2xl bg-slate-200 animate-pulse border border-slate-200" />
+          <div className="mt-4 h-20 rounded-2xl bg-slate-200 animate-pulse border border-slate-200" />
         ) : metrics.isLocked ? (
-          <div className="mt-5 flex items-center justify-between rounded-2xl border border-[#a7f3d0] bg-[#ecfdf5] px-6 py-4 shadow-sm">
+          <div className="mt-4 flex items-center justify-between rounded-2xl border border-[#a7f3d0] bg-[#ecfdf5] px-6 py-4 shadow-sm">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#10b981] text-white shadow-sm">
                 <Lock className="h-5 w-5 stroke-[2.5]" />
               </div>
               <div>
                 <h2 className="text-sm font-bold text-[#065f46]">
-                  Periode {currentLivePeriod} telah disetujui dan Terkunci
+                  Periode {selectedPeriod} telah disetujui dan Terkunci
                 </h2>
                 <p className="mt-0.5 text-xs text-[#047857]">
                   Disetujui oleh Budi Santoso, Head of Finance · {liveTime3} WIB
@@ -555,51 +676,73 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 shadow-sm">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleUnlockPeriod}
+                disabled={isActionLoading}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+              >
+                <Unlock className="h-3.5 w-3.5 text-slate-500" />
+                <span>Buka Kunci</span>
+              </button>
+
               <button
                 onClick={handleDownloadBeritaAcara}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 transition"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 shadow-sm transition hover:bg-slate-50 cursor-pointer"
               >
                 <Download className="h-3.5 w-3.5 text-slate-600" />
                 <span>Unduh Berita Acara</span>
               </button>
+
               <button
                 onClick={() => router.push("/export-report")}
-                className="rounded bg-[#e0f2fe] px-2 py-0.5 text-[11px] font-bold text-[#0284c7] hover:bg-[#bae6fd] transition"
+                className="rounded-lg bg-[#0a7ebf] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] transition cursor-pointer"
               >
-                → Export Report
+                Export Report →
               </button>
             </div>
           </div>
         ) : (
-          <div className="mt-5 flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/70 px-6 py-4 shadow-sm">
+          <div className="mt-4 flex items-center justify-between rounded-2xl border border-amber-200 bg-amber-50/70 px-6 py-4 shadow-sm">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white shadow-sm">
                 <Clock className="h-5 w-5 stroke-[2.5]" />
               </div>
               <div>
                 <h2 className="text-sm font-bold text-amber-950">
-                  Periode {currentLivePeriod} Sedang Dalam Proses Closing
+                  Periode {selectedPeriod} Sedang Dalam Proses Closing
                 </h2>
                 <p className="mt-0.5 text-xs text-amber-800">
-                  {metrics.pendingCount} exception belum diselesaikan sebelum penguncian buku dapat disahkan.
+                  {metrics.pendingCount > 0
+                    ? `${metrics.pendingCount} exception belum diselesaikan sebelum penguncian buku disahkan.`
+                    : "Seluruh anomali telah selesai ditinjau. Siap untuk disahkan dan dikunci."}
                 </p>
               </div>
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 shadow-sm">
-              <button
-                onClick={() => router.push("/priority-exception")}
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 transition"
-              >
-                <span>Lihat Exception</span>
-                <ArrowRight className="h-3.5 w-3.5 text-slate-600" />
-              </button>
+            <div className="flex items-center gap-2">
+              {metrics.pendingCount > 0 ? (
+                <button
+                  onClick={() => router.push("/priority-exception")}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-bold text-slate-800 shadow-sm hover:bg-slate-50 transition cursor-pointer"
+                >
+                  <span>Selesaikan Exception</span>
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-600" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => setIsLockModalOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#10b981] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#059669] transition cursor-pointer"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                  <span>Setujui & Kunci Periode</span>
+                </button>
+              )}
             </div>
           </div>
         )}
 
-        {/* Baris 1: 4 Kartu KPI Makro (dengan Skeleton) */}
+        {/* 4 Kartu KPI Makro */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, idx) => (
@@ -697,12 +840,12 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
           )}
         </div>
 
-        {/* Baris 2: Approval Timeline (Kiri) & Checklist Closing (Kanan) */}
+        {/* Baris 2: Approval Timeline & Checklist Closing */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
           {/* Approval Timeline */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-7">
             <h3 className="text-sm font-bold text-slate-900">Approval Timeline</h3>
-            <p className="text-[11px] text-slate-400">Jejak persetujuan periode</p>
+            <p className="text-[11px] text-slate-400">Jejak persetujuan periode {selectedPeriod}</p>
 
             <div className="mt-5 space-y-4">
               {isLoading ? (
@@ -722,13 +865,13 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
                 <>
                   {/* Step 1 */}
                   <div className="flex items-start gap-3">
-                    <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${transactions.length > 0 ? "bg-[#10b981] text-white" : "bg-slate-200 text-slate-400"}`}>
+                    <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${filteredPeriodTransactions.length > 0 ? "bg-[#10b981] text-white" : "bg-slate-200 text-slate-400"}`}>
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex flex-1 items-start justify-between">
                       <div>
                         <p className="text-xs font-bold text-slate-900">Data Diajukan</p>
-                        <p className="text-[11px] text-slate-400">Rina Anggraini · Finance Controller</p>
+                        <p className="text-[11px] text-slate-400">Finance Ops · Validasi {filteredPeriodTransactions.length} Transaksi</p>
                       </div>
                       <span className="text-[11px] text-slate-400">{liveTime1}</span>
                     </div>
@@ -742,7 +885,7 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
                     <div className="flex flex-1 items-start justify-between">
                       <div>
                         <p className="text-xs font-bold text-slate-900">Review Selesai</p>
-                        <p className="text-[11px] text-slate-400">Dimas Pratama · Finance Manager</p>
+                        <p className="text-[11px] text-slate-400">Finance Controller · {metrics.resolvedCount} Exception Terverifikasi</p>
                       </div>
                       <span className="text-[11px] text-slate-400">{liveTime2}</span>
                     </div>
@@ -750,7 +893,7 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
 
                   {/* Step 3 */}
                   <div className="flex items-start gap-3">
-                    <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${metrics.isFullyResolved ? "bg-[#10b981] text-white" : "bg-slate-200 text-slate-400"}`}>
+                    <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full ${metrics.isLocked ? "bg-[#10b981] text-white" : "bg-slate-200 text-slate-400"}`}>
                       <CheckCircle2 className="h-3.5 w-3.5" />
                     </div>
                     <div className="flex flex-1 items-start justify-between">
@@ -770,7 +913,7 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
                     <div className="flex flex-1 items-start justify-between">
                       <div>
                         <p className="text-xs font-bold text-slate-900">Periode Terkunci</p>
-                        <p className="text-[11px] text-slate-400">Sistem C2 Immutability</p>
+                        <p className="text-[11px] text-slate-400">Sistem CCR2 Immutability (Read-Only)</p>
                       </div>
                       <span className="text-[11px] text-slate-400">{liveTime4}</span>
                     </div>
@@ -910,6 +1053,81 @@ ${checklistEvaluated.items.map((i) => `[${i.done ? "v" : " "}] ${i.label}`).join
             </table>
           </div>
         </div>
+
+        {/* Modal Konfirmasi Otorisasi Kunci Periode */}
+        {isLockModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 text-left">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                    <ShieldCheck className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Otorisasi Penutupan Buku</h3>
+                    <p className="text-[11px] text-slate-400">Penguncian Periode {selectedPeriod}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsLockModalOpen(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3 text-xs">
+                <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Transaksi:</span>
+                    <span className="font-bold text-slate-800">{metrics.totalRecords.toLocaleString("id-ID")} Baris</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Biaya Final:</span>
+                    <span className="font-bold text-slate-900">{formatCompactRupiah(metrics.totalCost)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Exception Tertunda:</span>
+                    <span className="font-bold text-emerald-600">0 Item (Nihil)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700">Catatan Otorisasi Head of Finance</label>
+                  <textarea
+                    rows={2}
+                    value={approvalNotes}
+                    onChange={(e) => setApprovalNotes(e.target.value)}
+                    placeholder="Contoh: Seluruh rekonsiliasi biaya tervalidasi dan siap ditutup..."
+                    className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-[#0a7ebf]"
+                  />
+                </div>
+
+                <div className="rounded-lg bg-emerald-50 p-3 text-[11px] text-emerald-800 border border-emerald-100 leading-relaxed">
+                  ✓ Setelah dikunci, data periode ini akan menjadi <b>Read-Only</b> dan disuplai ke modul MID (Kelas B).
+                </div>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  onClick={() => setIsLockModalOpen(false)}
+                  disabled={isActionLoading}
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleLockPeriod}
+                  disabled={isActionLoading}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#10b981] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#059669] disabled:opacity-50"
+                >
+                  {isActionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />}
+                  <span>Konfirmasi & Kunci Periode</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

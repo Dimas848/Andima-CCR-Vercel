@@ -19,13 +19,11 @@ import {
   AlertCircle,
   ArrowRight,
   ShieldCheck,
+  ChevronRight,
 } from "lucide-react";
 
-import sidebar from "@/components/sidebar";
+import Sidebar from "@/components/sidebar";
 import { supabase } from "@/lib/supabase";
-
-// Alias ke huruf kapital untuk aturan parser sintaks JSX React
-const Sidebar = sidebar;
 
 export type PriorityLevel = "Critical" | "High" | "Medium" | "Low";
 export type ExceptionStatus = "Terbuka" | "Ditinjau" | "Dalam Proses" | "Selesai";
@@ -266,6 +264,10 @@ export default function PriorityExceptionPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Pagination State: Tepat 6 baris per view
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 6;
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
@@ -291,7 +293,7 @@ export default function PriorityExceptionPage() {
     return () => clearInterval(interval);
   }, [lastUpdatedTime]);
 
-  // Tarik Data Live dari Supabase
+  // Tarik Data Live dari Supabase View c2_cost_transactions
   const fetchPriorityData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -324,18 +326,19 @@ export default function PriorityExceptionPage() {
         let masalah = "Biaya operasional melampaui estimasi";
         let prioritas: PriorityLevel = "Medium";
 
-        if (!item.is_job_matched || item.job_number === "UNMATCHED") {
+        // Klasifikasi Hirarki Anomali & Tingkat Prioritas Baku
+        if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
           masalah = "Nomor pekerjaan tidak terdaftar di sistem CRM";
           prioritas = "Critical";
         } else if (!item.has_evidence) {
           masalah = "Bukti transaksi atau kuitansi belum ada";
           prioritas = "High";
-        } else if (actual >= 50000000) {
-          masalah = "Biaya tunggal bernilai tinggi di atas threshold";
-          prioritas = "High";
         } else if (variance > 0) {
           masalah = "Over budget alokasi biaya pengiriman";
-          prioritas = variance > 20000000 ? "Critical" : "High";
+          prioritas = variance > 20_000_000 ? "Critical" : "High";
+        } else if (actual >= 50_000_000) {
+          masalah = "Biaya tunggal bernilai tinggi di atas threshold";
+          prioritas = "High";
         }
 
         const status: ExceptionStatus = item.review_flag
@@ -443,7 +446,7 @@ export default function PriorityExceptionPage() {
       });
     }
 
-    const highCost = rows.filter((r) => r.nominalRaw >= 50000000);
+    const highCost = rows.filter((r) => r.nominalRaw >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -482,7 +485,8 @@ export default function PriorityExceptionPage() {
       const matchSearch =
         r.customer.toLowerCase().includes(search.toLowerCase()) ||
         r.masalah.toLowerCase().includes(search.toLowerCase()) ||
-        r.id.toLowerCase().includes(search.toLowerCase());
+        r.id.toLowerCase().includes(search.toLowerCase()) ||
+        r.jobNumber.toLowerCase().includes(search.toLowerCase());
 
       const matchPrioritas =
         selectedPrioritas === "Semua Prioritas" || r.prioritas === selectedPrioritas;
@@ -493,11 +497,16 @@ export default function PriorityExceptionPage() {
     });
   }, [rows, search, selectedPrioritas, selectedStatus]);
 
-  const displayedTableRows = useMemo(() => {
-    return filteredRows.slice(0, 6);
-  }, [filteredRows]);
+  // Paginasi: Tepat 6 baris per view, maksimal 4 nomor navigasi
+  const totalItems = filteredRows.length;
+  const totalPages = Math.min(4, Math.max(1, Math.ceil(totalItems / itemsPerPage)));
 
-  // Update Status ke Supabase
+  const displayedTableRows = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredRows.slice(start, start + itemsPerPage);
+  }, [filteredRows, currentPage, itemsPerPage]);
+
+  // Update Status ke Supabase (Sinkron Fisik ke c2_cost_actual_transactions & c2_cost_exceptions)
   const handleUpdateStatus = async (newStatus: ExceptionStatus) => {
     if (!activeItem) return;
 
@@ -506,15 +515,26 @@ export default function PriorityExceptionPage() {
       const isResolved = newStatus === "Selesai";
 
       if (activeItem.dbId && !activeItem.dbId.startsWith("db-")) {
-        const { error } = await supabase
-          .from("cost_actual_transactions")
+        // 1. Update ke tabel fisik transaksi utama
+        const { error: txError } = await supabase
+          .from("c2_cost_actual_transactions")
           .update({
+            status: newStatus,
             review_flag: !isResolved,
             description: notes || `Telah ditinjau dengan status ${newStatus}`,
           })
           .eq("id", activeItem.dbId);
 
-        if (error) throw error;
+        if (txError) throw txError;
+
+        // 2. Update log riwayat anomali jika tercatat
+        await supabase
+          .from("c2_cost_exceptions")
+          .update({
+            is_resolved: isResolved,
+            resolution_notes: notes || `Telah ditinjau dengan status ${newStatus}`,
+          })
+          .eq("transaction_id", activeItem.dbId);
       }
 
       setRows((prev) =>
@@ -567,8 +587,8 @@ export default function PriorityExceptionPage() {
       {/* Sidebar Navigasi */}
       <Sidebar />
 
-      {/* Konten Utama: Ditambahkan ml-64 min-w-0 agar tidak tertimpa sidebar fixed */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
+      {/* Konten Utama */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto">
         {/* Header Modul */}
         <div className="flex items-center justify-between">
           <div>
@@ -727,7 +747,7 @@ export default function PriorityExceptionPage() {
           )}
         </div>
 
-        {/* Baris Fokus Hari Ini & SLA Penyelesaian (dengan Skeleton) */}
+        {/* Baris Fokus Hari Ini & SLA Penyelesaian */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
           {/* Kotak Fokus Hari Ini */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -837,15 +857,21 @@ export default function PriorityExceptionPage() {
                   type="text"
                   placeholder="Cari customer atau ID..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-700 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-500 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
                 />
               </div>
 
               {/* Dropdown Filter Prioritas */}
               <select
                 value={selectedPrioritas}
-                onChange={(e) => setSelectedPrioritas(e.target.value)}
+                onChange={(e) => {
+                  setSelectedPrioritas(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0a7ebf]"
               >
                 <option value="Semua Prioritas">Semua Prioritas</option>
@@ -858,7 +884,10 @@ export default function PriorityExceptionPage() {
               {/* Dropdown Filter Status */}
               <select
                 value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
+                onChange={(e) => {
+                  setSelectedStatus(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0a7ebf]"
               >
                 <option value="Semua Status">Semua Status</option>
@@ -870,7 +899,7 @@ export default function PriorityExceptionPage() {
             </div>
           </div>
 
-          {/* Isi Tabel */}
+          {/* Isi Tabel (Tepat 6 Baris per Halaman) */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -968,7 +997,7 @@ export default function PriorityExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Tabel */}
+          {/* Footer Tabel & Paginasi Maksimal 4 Angka (1 2 3 4 >) */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -978,11 +1007,40 @@ export default function PriorityExceptionPage() {
             ) : (
               <>
                 <p className="text-xs text-slate-400">
-                  {displayedTableRows.length} dari {filteredRows.length} exception
+                  Menampilkan {totalItems > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–
+                  {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
                 </p>
-                <span className="rounded-full bg-[#ecfdf5] px-3 py-1 text-xs font-semibold text-[#059669] transition-all">
-                  {timeAgoText}
-                </span>
+
+                <div className="flex items-center gap-4">
+                  <span className="rounded-full bg-[#ecfdf5] px-3 py-1 text-xs font-semibold text-[#059669]">
+                    {timeAgoText}
+                  </span>
+
+                  <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
+                    {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((num) => (
+                      <button
+                        key={num}
+                        onClick={() => setCurrentPage(num)}
+                        className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                          currentPage === num
+                            ? "bg-[#0a7ebf] text-white font-bold"
+                            : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        {num}
+                      </button>
+                    ))}
+
+                    <button
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                      className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
+                      title="Halaman Berikutnya"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                    </button>
+                  </div>
+                </div>
               </>
             )}
           </div>
@@ -991,7 +1049,7 @@ export default function PriorityExceptionPage() {
         {/* Modal Lihat Detail & Tindak Lanjut Resolusi */}
         {activeItem && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
-            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 text-left">
               <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                 <div>
                   <h3 className="text-base font-bold text-slate-900">{activeItem.customer}</h3>
@@ -1033,7 +1091,7 @@ export default function PriorityExceptionPage() {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="Masukkan catatan peninjauan..."
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-900 placeholder:text-slate-500 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-900 placeholder:text-slate-400 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
                 />
               </div>
 
@@ -1047,21 +1105,21 @@ export default function PriorityExceptionPage() {
                 <button
                   disabled={isSubmitting}
                   onClick={() => handleUpdateStatus("Ditinjau")}
-                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+                  className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-60 cursor-pointer"
                 >
                   Ditinjau
                 </button>
                 <button
                   disabled={isSubmitting}
                   onClick={() => handleUpdateStatus("Dalam Proses")}
-                  className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 disabled:opacity-60"
+                  className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 disabled:opacity-60 cursor-pointer"
                 >
                   Dalam Proses
                 </button>
                 <button
                   disabled={isSubmitting}
                   onClick={() => handleUpdateStatus("Selesai")}
-                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-60"
+                  className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3.5 py-1.5 text-xs font-bold text-white shadow hover:bg-emerald-700 disabled:opacity-60 cursor-pointer"
                 >
                   {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                   Selesaikan

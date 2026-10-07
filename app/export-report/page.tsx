@@ -19,25 +19,22 @@ import {
   Lock,
   RotateCw,
   X,
-  FileQuestion,
+  CheckCircle2,
 } from "lucide-react";
 
-import sidebar from "@/components/sidebar";
+import Sidebar from "@/components/sidebar";
 import { supabase } from "@/lib/supabase";
-
-// Alias huruf kapital untuk sintaks JSX React
-const Sidebar = sidebar;
 
 interface ReportHistoryRow {
   id: string;
   jenis: string;
   periode: string;
+  customer: string;
   isiData: string;
   dibuat: string;
   status: "Siap" | "Kedaluwarsa";
 }
 
-// Helper Format Waktu & Bulan Real-Time
 const MONTH_NAMES = [
   "Januari", "Februari", "Maret", "April", "Mei", "Juni",
   "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -247,7 +244,6 @@ function NotificationPopover({
 // =========================================================================
 export default function ExportReportPage() {
   const currentPeriod = useMemo(() => getDynamicPeriod(0), []);
-  const previousPeriod = useMemo(() => getDynamicPeriod(1), []);
 
   const [selectedReportType, setSelectedReportType] = useState<string>("Monthly Cost Detail");
   const [periode, setPeriode] = useState<string>(currentPeriod);
@@ -262,6 +258,7 @@ export default function ExportReportPage() {
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // State Data Murni dari Database Supabase
   const [dbTransactions, setDbTransactions] = useState<any[]>([]);
@@ -288,29 +285,41 @@ export default function ExportReportPage() {
       const totalExceptions = data.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence).length;
       const totalCust = new Set(data.map((t) => t.customer_name).filter(Boolean)).size;
 
-      // Bentuk riwayat laporan dinamis dari data aktual
+      // Inisialisasi riwayat laporan awal
       setReportsList([
         {
-          id: `rep-${Date.now()}-1`,
+          id: `rep-init-1`,
           jenis: "Monthly Cost Detail",
           periode: currentPeriod,
+          customer: "Semua Customer",
           isiData: `${totalRows.toLocaleString("id-ID")} baris data`,
           dibuat: formatLiveDate(new Date(), 10),
           status: "Siap",
         },
         {
-          id: `rep-${Date.now()}-2`,
+          id: `rep-init-2`,
           jenis: "Exception Summary",
           periode: currentPeriod,
+          customer: "Semua Customer",
           isiData: `${totalExceptions} exception`,
-          dibuat: formatLiveDate(new Date(), 60),
+          dibuat: formatLiveDate(new Date(), 45),
           status: "Siap",
         },
         {
-          id: `rep-${Date.now()}-3`,
+          id: `rep-init-3`,
           jenis: "Customer Cost Breakdown",
-          periode: previousPeriod,
+          periode: currentPeriod,
+          customer: "Semua Customer",
           isiData: `${totalCust} customer`,
+          dibuat: formatLiveDate(new Date(), 120),
+          status: "Siap",
+        },
+        {
+          id: `rep-init-4`,
+          jenis: "Berita Acara Closing",
+          periode: currentPeriod,
+          customer: "Semua Customer",
+          isiData: "Dokumen Otorisasi",
           dibuat: formatLiveDate(new Date(), 1440),
           status: "Kedaluwarsa",
         },
@@ -323,23 +332,33 @@ export default function ExportReportPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, [currentPeriod, previousPeriod]);
+  }, [currentPeriod]);
 
   useEffect(() => {
     fetchLiveDatabase();
   }, [fetchLiveDatabase]);
 
-  // Dropdown Customer Murni Dinamis
+  // Dropdown Periode Dinamis Berdasarkan Data Database
+  const dynamicPeriodOptions = useMemo(() => {
+    const list = Array.from(new Set(dbTransactions.map((t) => t.period_month).filter(Boolean)));
+    if (list.length > 0) return list;
+    return [getDynamicPeriod(0), getDynamicPeriod(1)];
+  }, [dbTransactions]);
+
+  // Dropdown Customer Dinamis Berdasarkan Data Database
   const dynamicCustomerOptions = useMemo(() => {
     const unique = Array.from(new Set(dbTransactions.map((t) => t.customer_name))).filter(Boolean);
     return ["Semua Customer", ...unique];
   }, [dbTransactions]);
 
-  // Dataset Aktif Berdasarkan Filter
+  // Dataset Aktif Sesuai Filter Periode & Customer
   const activeDataset = useMemo(() => {
-    if (selectedCustomer === "Semua Customer") return dbTransactions;
-    return dbTransactions.filter((t) => t.customer_name === selectedCustomer);
-  }, [dbTransactions, selectedCustomer]);
+    return dbTransactions.filter((t) => {
+      const matchPeriod = !periode || t.period_month === periode;
+      const matchCustomer = selectedCustomer === "Semua Customer" || t.customer_name === selectedCustomer;
+      return matchPeriod && matchCustomer;
+    });
+  }, [dbTransactions, periode, selectedCustomer]);
 
   const activeExceptionCount = useMemo(() => {
     return activeDataset.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence).length;
@@ -348,7 +367,7 @@ export default function ExportReportPage() {
   // Kategori Notifikasi Dinamis
   const notificationCategories = useMemo(() => {
     const list = [];
-    const overBudget = dbTransactions.filter((r) => Number(r.variance || 0) > 0);
+    const overBudget = activeDataset.filter((r) => Number(r.variance || 0) > 0);
     if (overBudget.length > 0) {
       list.push({
         title: "Over Budget",
@@ -363,7 +382,7 @@ export default function ExportReportPage() {
       });
     }
 
-    const highCost = dbTransactions.filter((r) => Number(r.actual_cost || 0) >= 50000000);
+    const highCost = activeDataset.filter((r) => Number(r.actual_cost || 0) >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -378,7 +397,7 @@ export default function ExportReportPage() {
       });
     }
 
-    const missingEvidence = dbTransactions.filter((r) => !r.has_evidence);
+    const missingEvidence = activeDataset.filter((r) => !r.has_evidence);
     if (missingEvidence.length > 0) {
       list.push({
         title: "Missing Evidence",
@@ -394,15 +413,285 @@ export default function ExportReportPage() {
     }
 
     return list;
-  }, [dbTransactions]);
+  }, [activeDataset]);
 
-  // Handler Generate Laporan Baru
+  // Generator File Excel Dinamis Sesuai Jenis Laporan
+  const generateAndDownloadWorkbook = async (
+    reportType: string,
+    targetPeriod: string,
+    targetCustomer: string
+  ) => {
+    try {
+      const dataset = dbTransactions.filter((t) => {
+        const matchPeriod = !targetPeriod || t.period_month === targetPeriod;
+        const matchCustomer = targetCustomer === "Semua Customer" || t.customer_name === targetCustomer;
+        return matchPeriod && matchCustomer;
+      });
+
+      if (dataset.length === 0) {
+        alert("Tidak ada data transaksi untuk kriteria laporan ini.");
+        return;
+      }
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "PT Andima Transportindo - CCR C2";
+      workbook.created = new Date();
+
+      const totalActual = dataset.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
+      const totalPlanned = dataset.reduce((acc, curr) => acc + Number(curr.planned_cost || 0), 0);
+      const varianceVal = totalActual - totalPlanned;
+      const variancePct = totalPlanned > 0 ? ((varianceVal / totalPlanned) * 100).toFixed(1) : "0.0";
+
+      // 1. JENIS LAPORAN: MONTHLY COST DETAIL
+      if (reportType === "Monthly Cost Detail") {
+        if (sertakanSummary) {
+          const sheet1 = workbook.addWorksheet("Ringkasan MtM");
+          sheet1.columns = [
+            { header: "Indikator Kinerja Keuangan", key: "indikator", width: 34 },
+            { header: "Nilai Realisasi Aktual (IDR)", key: "realisasi", width: 28 },
+            { header: "Pagu Anggaran (IDR)", key: "budget", width: 28 },
+            { header: "Deviasi MtM", key: "deviasi", width: 18 },
+          ];
+
+          sheet1.getRow(1).eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0A7EBF" } };
+            cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+            cell.alignment = { vertical: "middle", horizontal: "center" };
+          });
+
+          sheet1.addRow({
+            indikator: "Total Biaya Operasional Bulanan",
+            realisasi: totalActual,
+            budget: totalPlanned,
+            deviasi: varianceVal >= 0 ? `+${variancePct}%` : `${variancePct}%`,
+          });
+          sheet1.addRow({
+            indikator: "Total Transaksi Tercatat",
+            realisasi: dataset.length,
+            budget: dataset.length,
+            deviasi: "100%",
+          });
+          sheet1.addRow({
+            indikator: "Jumlah Akun Pelanggan Terlibat",
+            realisasi: new Set(dataset.map((t) => t.customer_name)).size,
+            budget: new Set(dataset.map((t) => t.customer_name)).size,
+            deviasi: "Lengkap",
+          });
+
+          sheet1.getColumn(2).numFmt = "#,##0";
+          sheet1.getColumn(3).numFmt = "#,##0";
+        }
+
+        const sheet2 = workbook.addWorksheet("Detail Transaksi");
+        const cols = [
+          { header: "No. Voucher", key: "voucher", width: 20 },
+          { header: "Job Number", key: "job", width: 24 },
+          { header: "Nama Customer", key: "name", width: 32 },
+          { header: "Kategori Biaya", key: "cat", width: 20 },
+          { header: "Nominal Aktual (IDR)", key: "actual", width: 24 },
+          { header: "Pagu Anggaran (IDR)", key: "planned", width: 24 },
+          { header: "Status Bukti", key: "evidence", width: 18 },
+        ];
+        if (sertakanEvidence) {
+          cols.push({ header: "Tautan Berkas Bukti", key: "evidence_url", width: 38 });
+        }
+        sheet2.columns = cols;
+
+        sheet2.getRow(1).eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F2342" } };
+          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        dataset.forEach((t) => {
+          sheet2.addRow({
+            voucher: t.voucher_no || "-",
+            job: t.job_number || "-",
+            name: t.customer_name || "-",
+            cat: t.cost_category || "-",
+            actual: Number(t.actual_cost || 0),
+            planned: Number(t.planned_cost || 0),
+            evidence: t.has_evidence ? "LENGKAP" : "BELUM LENGKAP",
+            evidence_url: t.evidence_url || "Belum ada lampiran",
+          });
+        });
+        sheet2.getColumn(5).numFmt = "#,##0";
+        sheet2.getColumn(6).numFmt = "#,##0";
+
+        if (sertakanException) {
+          const sheet3 = workbook.addWorksheet("Rekapitulasi Anomali");
+          sheet3.columns = [
+            { header: "Nomor Voucher", key: "voucher", width: 20 },
+            { header: "Job Number", key: "job", width: 24 },
+            { header: "Customer", key: "cust", width: 30 },
+            { header: "Jenis Anomali", key: "tag", width: 24 },
+            { header: "Nominal Biaya (IDR)", key: "amount", width: 22 },
+          ];
+
+          sheet3.getRow(1).eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE11D48" } };
+            cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+            cell.alignment = { vertical: "middle", horizontal: "center" };
+          });
+
+          const excList = dataset.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence);
+          excList.forEach((ex) => {
+            sheet3.addRow({
+              voucher: ex.voucher_no || "-",
+              job: ex.job_number || "-",
+              cust: ex.customer_name || "-",
+              tag: Number(ex.variance || 0) > 0 ? "OVER_BUDGET" : !ex.has_evidence ? "MISSING_EVIDENCE" : "REVIEW",
+              amount: Number(ex.actual_cost || 0),
+            });
+          });
+          sheet3.getColumn(5).numFmt = "#,##0";
+        }
+      }
+
+      // 2. JENIS LAPORAN: EXCEPTION SUMMARY
+      else if (reportType === "Exception Summary") {
+        const sheet = workbook.addWorksheet("Exception Summary");
+        sheet.columns = [
+          { header: "ID Exception", key: "id", width: 18 },
+          { header: "Job Number", key: "job", width: 24 },
+          { header: "Customer", key: "cust", width: 30 },
+          { header: "Kategori Biaya", key: "cat", width: 20 },
+          { header: "Nominal Aktual (IDR)", key: "actual", width: 22 },
+          { header: "Toleransi Budget (IDR)", key: "planned", width: 22 },
+          { header: "Klasifikasi Anomali", key: "tag", width: 24 },
+          { header: "Status Resolusi", key: "status", width: 18 },
+        ];
+
+        sheet.getRow(1).eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE11D48" } };
+          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        const excList = dataset.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence);
+        excList.forEach((ex, idx) => {
+          let tag = "OVER_BUDGET";
+          if (!ex.is_job_matched || ex.job_number === "UNMATCHED") tag = "DUPLICATE_DATA";
+          else if (!ex.has_evidence) tag = "MISSING_EVIDENCE";
+          else if (Number(ex.actual_cost || 0) >= 50_000_000) tag = "HIGH_COST";
+
+          sheet.addRow({
+            id: `EXC-${String(idx + 1).padStart(4, "0")}`,
+            job: ex.job_number || "-",
+            cust: ex.customer_name || "-",
+            cat: ex.cost_category || "-",
+            actual: Number(ex.actual_cost || 0),
+            planned: Number(ex.planned_cost || 0),
+            tag,
+            status: ex.status || (ex.review_flag ? "Terbuka" : "Selesai"),
+          });
+        });
+        sheet.getColumn(5).numFmt = "#,##0";
+        sheet.getColumn(6).numFmt = "#,##0";
+      }
+
+      // 3. JENIS LAPORAN: CUSTOMER COST BREAKDOWN
+      else if (reportType === "Customer Cost Breakdown") {
+        const sheet = workbook.addWorksheet("Customer Breakdown");
+        sheet.columns = [
+          { header: "Nama Customer", key: "cust", width: 32 },
+          { header: "Total Realisasi (IDR)", key: "actual", width: 24 },
+          { header: "Pagu Anggaran (IDR)", key: "planned", width: 24 },
+          { header: "Selisih Variance (IDR)", key: "variance", width: 24 },
+          { header: "Jumlah Anomali", key: "exc", width: 18 },
+          { header: "Kontribusi Total (%)", key: "share", width: 20 },
+        ];
+
+        sheet.getRow(1).eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0A7EBF" } };
+          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        const custMap = new Map<string, { actual: number; planned: number; exc: number }>();
+        dataset.forEach((t) => {
+          const name = t.customer_name || "Tanpa Nama";
+          const curr = custMap.get(name) || { actual: 0, planned: 0, exc: 0 };
+          const isExc = Boolean(t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence);
+          custMap.set(name, {
+            actual: curr.actual + Number(t.actual_cost || 0),
+            planned: curr.planned + Number(t.planned_cost || 0),
+            exc: curr.exc + (isExc ? 1 : 0),
+          });
+        });
+
+        const grandActual = Array.from(custMap.values()).reduce((sum, v) => sum + v.actual, 0);
+
+        Array.from(custMap.entries()).forEach(([name, val]) => {
+          const share = grandActual > 0 ? ((val.actual / grandActual) * 100).toFixed(1) + "%" : "0%";
+          sheet.addRow({
+            cust: name,
+            actual: val.actual,
+            planned: val.planned,
+            variance: val.actual - val.planned,
+            exc: val.exc,
+            share,
+          });
+        });
+        sheet.getColumn(2).numFmt = "#,##0";
+        sheet.getColumn(3).numFmt = "#,##0";
+        sheet.getColumn(4).numFmt = "#,##0";
+      }
+
+      // 4. JENIS LAPORAN: BERITA ACARA CLOSING
+      else if (reportType === "Berita Acara Closing") {
+        const sheet = workbook.addWorksheet("Berita Acara");
+        sheet.columns = [
+          { header: "Parameter Otorisasi Penutupan Buku", key: "param", width: 44 },
+          { header: "Rincian / Status Eksekusi", key: "val", width: 44 },
+        ];
+
+        sheet.getRow(1).eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF059669" } };
+          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        });
+
+        sheet.addRow({ param: "Nomor Dokumen Berita Acara", val: `BA-CCR2/${targetPeriod.replace(/\s+/g, "/")}/001` });
+        sheet.addRow({ param: "Periode Buku Transaksi", val: targetPeriod });
+        sheet.addRow({ param: "Total Baris Transaksi Tervalidasi", val: `${dataset.length.toLocaleString("id-ID")} Baris` });
+        sheet.addRow({ param: "Total Realisasi Biaya Bersih (IDR)", val: totalActual });
+        sheet.addRow({ param: "Status Rekonsiliasi Exception", val: activeExceptionCount === 0 ? "Nihil (Semua Selesai)" : `${activeExceptionCount} Exception Ditangani` });
+        sheet.addRow({ param: "Status Pengesahan Head of Finance", val: "DISETUJUI & TERKUNCI (READ-ONLY)" });
+        sheet.addRow({ param: "Waktu Otorisasi Sistem", val: formatLiveDate(new Date()) });
+        sheet.getColumn(2).numFmt = "#,##0";
+      }
+
+      // Tulis file Excel ke buffer dan unduh otomatis
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const cleanFileName = reportType.replace(/\s+/g, "_");
+      link.download = `${cleanFileName}_${targetPeriod.replace(/\s+/g, "_")}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      setToastMessage(`Laporan ${reportType} (${targetPeriod}) berhasil diunduh!`);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err: any) {
+      console.error("Gagal ekspor Excel:", err);
+      alert(`Gagal membuat berkas Excel: ${err.message}`);
+    }
+  };
+
+  // Handler Generate Laporan Baru (Simulasi Progres Visual + Pencatatan Nyata)
   const handleBuatLaporan = () => {
     setIsGenerating(true);
     setActiveStep(1);
 
-    setTimeout(() => setActiveStep(2), 350);
-    setTimeout(() => setActiveStep(3), 700);
+    setTimeout(() => setActiveStep(2), 300);
+    setTimeout(() => setActiveStep(3), 600);
     setTimeout(() => {
       setActiveStep(4);
       setIsGenerating(false);
@@ -411,148 +700,16 @@ export default function ExportReportPage() {
         id: `rep-${Date.now()}`,
         jenis: selectedReportType,
         periode: periode,
+        customer: selectedCustomer,
         isiData: `${activeDataset.length.toLocaleString("id-ID")} baris data`,
         dibuat: formatLiveDate(new Date()),
         status: "Siap",
       };
 
       setReportsList((prev) => [newReport, ...prev]);
-    }, 1100);
-  };
-
-  // Ekspor Excel Riil Menggunakan ExcelJS
-  const handleDownloadExcel = async () => {
-    try {
-      if (activeDataset.length === 0) return;
-
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = "PT Andima Transportindo - CCR C2";
-      workbook.created = new Date();
-
-      const totalActual = activeDataset.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
-      const totalPlanned = activeDataset.reduce((acc, curr) => acc + Number(curr.planned_cost || 0), 0);
-      const varianceVal = totalActual - totalPlanned;
-      const variancePct = totalPlanned > 0 ? ((varianceVal / totalPlanned) * 100).toFixed(1) : "0.0";
-
-      // SHEET 1: Ringkasan MtM
-      if (sertakanSummary) {
-        const sheet1 = workbook.addWorksheet("Ringkasan MtM");
-        sheet1.columns = [
-          { header: "Indikator Kinerja Keuangan", key: "indikator", width: 34 },
-          { header: "Nilai Realisasi Aktual (IDR)", key: "realisasi", width: 28 },
-          { header: "Pagu Anggaran (IDR)", key: "budget", width: 28 },
-          { header: "Deviasi MtM", key: "deviasi", width: 18 },
-        ];
-
-        sheet1.getRow(1).eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0A7EBF" } };
-          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-
-        sheet1.addRow({
-          indikator: "Total Biaya Operasional Bulanan",
-          realisasi: totalActual,
-          budget: totalPlanned,
-          deviasi: varianceVal >= 0 ? `+${variancePct}%` : `${variancePct}%`,
-        });
-        sheet1.addRow({
-          indikator: "Total Transaksi Tercatat",
-          realisasi: activeDataset.length,
-          budget: activeDataset.length,
-          deviasi: "100%",
-        });
-        sheet1.addRow({
-          indikator: "Jumlah Akun Pelanggan Terlibat",
-          realisasi: new Set(activeDataset.map((t) => t.customer_name)).size,
-          budget: new Set(activeDataset.map((t) => t.customer_name)).size,
-          deviasi: "Lengkap",
-        });
-
-        sheet1.getColumn(2).numFmt = "#,##0";
-        sheet1.getColumn(3).numFmt = "#,##0";
-      }
-
-      // SHEET 2: Detail Transaksi
-      const sheet2 = workbook.addWorksheet("Detail Transaksi");
-      sheet2.columns = [
-        { header: "No. Voucher", key: "voucher", width: 20 },
-        { header: "Job Number", key: "job", width: 24 },
-        { header: "Nama Customer", key: "name", width: 32 },
-        { header: "Kategori Biaya", key: "cat", width: 20 },
-        { header: "Nominal Aktual (IDR)", key: "actual", width: 24 },
-        { header: "Pagu Anggaran (IDR)", key: "planned", width: 24 },
-        { header: "Status Bukti", key: "evidence", width: 18 },
-      ];
-
-      sheet2.getRow(1).eachCell((cell) => {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0D1B2A" } };
-        cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
-        cell.alignment = { vertical: "middle", horizontal: "center" };
-      });
-
-      activeDataset.forEach((t) => {
-        sheet2.addRow({
-          voucher: t.voucher_no || "-",
-          job: t.job_number || "-",
-          name: t.customer_name || "-",
-          cat: t.cost_category || "-",
-          actual: Number(t.actual_cost || 0),
-          planned: Number(t.planned_cost || 0),
-          evidence: t.has_evidence ? "LENGKAP" : "BELUM LENGKAP",
-        });
-      });
-      sheet2.getColumn(5).numFmt = "#,##0";
-      sheet2.getColumn(6).numFmt = "#,##0";
-
-      // SHEET 3: Rekapitulasi Anomali
-      if (sertakanException) {
-        const sheet3 = workbook.addWorksheet("Rekapitulasi Anomali");
-        sheet3.columns = [
-          { header: "Nomor Voucher", key: "voucher", width: 20 },
-          { header: "Job Number", key: "job", width: 24 },
-          { header: "Customer", key: "cust", width: 30 },
-          { header: "Jenis Anomali", key: "tag", width: 24 },
-          { header: "Nominal Biaya (IDR)", key: "amount", width: 22 },
-        ];
-
-        sheet3.getRow(1).eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE11D48" } };
-          cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-        });
-
-        const excList = activeDataset.filter(
-          (t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence
-        );
-
-        excList.forEach((ex) => {
-          sheet3.addRow({
-            voucher: ex.voucher_no || "-",
-            job: ex.job_number || "-",
-            cust: ex.customer_name || "-",
-            tag: Number(ex.variance || 0) > 0 ? "OVER_BUDGET" : !ex.has_evidence ? "MISSING_EVIDENCE" : "REVIEW",
-            amount: Number(ex.actual_cost || 0),
-          });
-        });
-        sheet3.getColumn(5).numFmt = "#,##0";
-      }
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `Monthly_Cost_Detail_${periode.replace(/\s+/g, "_")}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Gagal ekspor Excel:", err);
-    }
+      setToastMessage(`Laporan "${selectedReportType}" berhasil dibuat dan siap diunduh.`);
+      setTimeout(() => setToastMessage(null), 3500);
+    }, 950);
   };
 
   return (
@@ -560,9 +717,9 @@ export default function ExportReportPage() {
       {/* Sidebar Navigasi */}
       <Sidebar />
 
-      {/* Konten Utama: ml-64 min-w-0 agar tidak tertimpa sidebar fixed */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
-        {/* Header Dasbor */}
+      {/* Konten Utama */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto">
+        {/* Header Modul */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
@@ -577,7 +734,7 @@ export default function ExportReportPage() {
             <button
               onClick={fetchLiveDatabase}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
@@ -616,7 +773,20 @@ export default function ExportReportPage() {
           </div>
         </div>
 
-        {/* Section 1: Pilih Jenis Laporan (dengan Skeleton) */}
+        {/* Toast Notifikasi Feedback */}
+        {toastMessage && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <Check className="h-5 w-5 text-emerald-600" />
+              <p className="text-xs font-bold text-emerald-950">{toastMessage}</p>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-950">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Section 1: Pilih Jenis Laporan */}
         <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
@@ -664,12 +834,12 @@ export default function ExportReportPage() {
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-50 text-[#e11d48]">
                     <AlertCircle className="h-4 w-4" />
                   </div>
                   <h4 className="mt-3 text-xs font-bold text-slate-800">Exception Summary</h4>
                   <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-                    Ringkasan seluruh cost & priority exception (.xlsx)
+                    Ringkasan seluruh anomali dan tindak lanjut (.xlsx)
                   </p>
                 </div>
 
@@ -681,12 +851,12 @@ export default function ExportReportPage() {
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-50 text-purple-600">
                     <Building2 className="h-4 w-4" />
                   </div>
                   <h4 className="mt-3 text-xs font-bold text-slate-800">Customer Cost Breakdown</h4>
                   <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-                    Rincian biaya per customer per bulan (.xlsx)
+                    Rincian biaya dan anggaran per customer (.xlsx)
                   </p>
                 </div>
 
@@ -698,12 +868,12 @@ export default function ExportReportPage() {
                       : "border-slate-200 hover:border-slate-300"
                   }`}
                 >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600">
                     <Lock className="h-4 w-4" />
                   </div>
                   <h4 className="mt-3 text-xs font-bold text-slate-800">Berita Acara Closing</h4>
                   <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
-                    Dokumen BA Monthly Closing (.pdf / .docx)
+                    Dokumen pengesahan BA Monthly Closing (.xlsx)
                   </p>
                 </div>
               </>
@@ -717,7 +887,7 @@ export default function ExportReportPage() {
             <div>
               <h3 className="text-sm font-bold text-slate-900">Buat Laporan Baru</h3>
               <p className="text-[11px] text-slate-400">
-                Pilih parameter laporan Excel - {selectedReportType}
+                Pilih parameter laporan Excel — {selectedReportType}
               </p>
 
               {isLoading ? (
@@ -742,8 +912,11 @@ export default function ExportReportPage() {
                         onChange={(e) => setPeriode(e.target.value)}
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-[#0a7ebf]"
                       >
-                        <option value={currentPeriod}>{currentPeriod}</option>
-                        <option value={previousPeriod}>{previousPeriod}</option>
+                        {dynamicPeriodOptions.map((p) => (
+                          <option key={`opt-per-${p}`} value={p}>
+                            {p}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -765,7 +938,7 @@ export default function ExportReportPage() {
                     <button
                       onClick={handleBuatLaporan}
                       disabled={isGenerating || activeDataset.length === 0}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50 cursor-pointer"
                     >
                       {isGenerating ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -797,7 +970,7 @@ export default function ExportReportPage() {
                       <span>Sertakan exception</span>
                     </label>
 
-                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-400">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
                       <input
                         type="checkbox"
                         checked={sertakanEvidence}
@@ -815,7 +988,7 @@ export default function ExportReportPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-4 flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Format Output</h3>
-              <p className="text-[11px] text-slate-400">Microsoft Excel</p>
+              <p className="text-[11px] text-slate-400">Microsoft Excel Workbook</p>
 
               <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-100 bg-[#ecfdf5] p-3.5">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#10b981] text-white">
@@ -823,13 +996,13 @@ export default function ExportReportPage() {
                 </div>
                 <div>
                   <h4 className="text-xs font-bold text-slate-900">.XLSX</h4>
-                  <p className="text-[10px] text-slate-500">Kompatibel Excel 2016+</p>
+                  <p className="text-[10px] text-slate-500">Kompatibel Excel 2016+ & Google Sheets</p>
                 </div>
               </div>
             </div>
 
             <p className="mt-4 text-[10px] leading-relaxed text-slate-400">
-              Laporan dilengkapi tab Ringkasan, Detail Transaksi, dan Exception.
+              Laporan terstruktur rapi dengan format mata uang otomatis dan lembar kerja terpisah.
             </p>
           </div>
         </div>
@@ -839,7 +1012,7 @@ export default function ExportReportPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-8 flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Proses Generate</h3>
-              <p className="text-[11px] text-slate-400">Laporan diproses di latar belakang</p>
+              <p className="text-[11px] text-slate-400">Penyusunan berkas otomatis dari database</p>
 
               <div className="mt-5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
@@ -902,15 +1075,15 @@ export default function ExportReportPage() {
                 <div>
                   <h4 className="text-xs font-bold text-slate-900">Laporan Siap</h4>
                   <p className="text-[11px] text-slate-500">
-                    Monthly_Cost_Detail_{periode.replace(/\s+/g, "_")}.xlsx · {activeDataset.length} baris live
+                    {selectedReportType}_{periode.replace(/\s+/g, "_")}.xlsx · {activeDataset.length} baris live
                   </p>
                 </div>
               </div>
 
               <button
-                onClick={handleDownloadExcel}
+                onClick={() => generateAndDownloadWorkbook(selectedReportType, periode, selectedCustomer)}
                 disabled={activeDataset.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] transition disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] transition disabled:opacity-50 cursor-pointer"
               >
                 <Download className="h-3.5 w-3.5" />
                 <span>Unduh Excel</span>
@@ -925,14 +1098,14 @@ export default function ExportReportPage() {
               </div>
               <h3 className="mt-3 text-sm font-bold text-white">Siap untuk Diunduh</h3>
               <p className="mt-1 text-[11px] text-sky-100/80 leading-relaxed max-w-[210px]">
-                Tautan aktif selama 24 jam dan dapat diunduh maksimal 5 kali.
+                Berkas laporan di-generate langsung dari transaksi database Supabase.
               </p>
             </div>
 
             <button
-              onClick={handleDownloadExcel}
+              onClick={() => generateAndDownloadWorkbook(selectedReportType, periode, selectedCustomer)}
               disabled={activeDataset.length === 0}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] py-2 text-xs font-bold text-white shadow hover:bg-[#0369a1] active:scale-95 transition disabled:opacity-50"
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] py-2 text-xs font-bold text-white shadow hover:bg-[#0369a1] active:scale-95 transition disabled:opacity-50 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5" />
               <span>Unduh Excel</span>
@@ -945,7 +1118,7 @@ export default function ExportReportPage() {
           <div className="flex items-center justify-between pb-4 border-b border-slate-100">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Riwayat Laporan</h3>
-              <p className="text-[11px] text-slate-400">File yang dibuat dalam 30 hari terakhir</p>
+              <p className="text-[11px] text-slate-400">File yang dibuat dalam sesi ini</p>
             </div>
             <span className="rounded-full bg-[#e0f2fe] px-2.5 py-0.5 text-[11px] font-bold text-[#0284c7]">
               {reportsList.length} laporan
@@ -958,6 +1131,7 @@ export default function ExportReportPage() {
                 <tr className="border-b border-slate-100 text-[11px] font-semibold text-slate-400">
                   <th className="py-3 px-3">JENIS LAPORAN</th>
                   <th className="py-3 px-3">PERIODE</th>
+                  <th className="py-3 px-3">CUSTOMER</th>
                   <th className="py-3 px-3">ISI DATA</th>
                   <th className="py-3 px-3">DIBUAT</th>
                   <th className="py-3 px-3">STATUS</th>
@@ -970,6 +1144,7 @@ export default function ExportReportPage() {
                     <tr key={`history-skel-${idx}`} className="animate-pulse">
                       <td className="py-3.5 px-3"><div className="h-3.5 w-36 rounded bg-slate-200" /></td>
                       <td className="py-3.5 px-3"><div className="h-3.5 w-24 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-3.5 w-24 rounded bg-slate-200" /></td>
                       <td className="py-3.5 px-3"><div className="h-3.5 w-20 rounded bg-slate-200" /></td>
                       <td className="py-3.5 px-3"><div className="h-3.5 w-28 rounded bg-slate-200" /></td>
                       <td className="py-3.5 px-3"><div className="h-4 w-14 rounded-full bg-slate-200" /></td>
@@ -978,7 +1153,7 @@ export default function ExportReportPage() {
                   ))
                 ) : reportsList.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-xs text-slate-400">
+                    <td colSpan={7} className="py-10 text-center text-xs text-slate-400">
                       Belum ada riwayat laporan yang dibuat.
                     </td>
                   </tr>
@@ -990,6 +1165,9 @@ export default function ExportReportPage() {
                       </td>
                       <td className="py-3.5 px-3 text-slate-700">
                         {row.periode}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-600 font-medium">
+                        {row.customer}
                       </td>
                       <td className="py-3.5 px-3 text-slate-700 font-medium">
                         {row.isiData}
@@ -1011,16 +1189,21 @@ export default function ExportReportPage() {
                       <td className="py-3.5 px-3 text-center">
                         {row.status === "Siap" ? (
                           <button
-                            onClick={handleDownloadExcel}
-                            className="inline-flex items-center gap-1 rounded bg-[#e0f2fe] px-2.5 py-1 text-[11px] font-bold text-[#0284c7] hover:bg-[#bae6fd] transition"
+                            onClick={() => generateAndDownloadWorkbook(row.jenis, row.periode, row.customer)}
+                            className="inline-flex items-center gap-1 rounded bg-[#e0f2fe] px-2.5 py-1 text-[11px] font-bold text-[#0284c7] hover:bg-[#bae6fd] transition cursor-pointer"
                           >
                             <Download className="h-3 w-3" />
                             <span>Unduh</span>
                           </button>
                         ) : (
                           <button
-                            onClick={handleBuatLaporan}
-                            className="inline-flex items-center gap-1 rounded bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-200 transition"
+                            onClick={() => {
+                              setSelectedReportType(row.jenis);
+                              setPeriode(row.periode);
+                              setSelectedCustomer(row.customer);
+                              handleBuatLaporan();
+                            }}
+                            className="inline-flex items-center gap-1 rounded bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-200 transition cursor-pointer"
                           >
                             <RotateCw className="h-3 w-3" />
                             <span>Buat ulang</span>
@@ -1036,7 +1219,7 @@ export default function ExportReportPage() {
 
           <div className="mt-4 flex items-center gap-1.5 text-[11px] text-slate-400 border-t border-slate-100 pt-3">
             <Info className="h-3.5 w-3.5 text-sky-600" />
-            <span>File otomatis dihapus setelah 7 hari untuk menjaga keamanan data.</span>
+            <span>File otomatis disinkronkan langsung dari data rekonsiliasi biaya Supabase.</span>
           </div>
         </div>
       </main>

@@ -247,18 +247,19 @@ export default function CostExceptionPage() {
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState<string>("Semua Tipe");
   const [selectedStatus, setSelectedStatus] = useState<string>("Semua Status");
+  const [isSlaFilterActive, setIsSlaFilterActive] = useState<boolean>(false);
 
-  // State Popover & Modal
+  // State Popover & Rule Modal
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [ruleBudgetVariance, setRuleBudgetVariance] = useState("5");
   const [ruleHighCostLimit, setRuleHighCostLimit] = useState("50000000");
 
-  // Pagination State
+  // Pagination State: Tepat 6 baris per view
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
-  // Tarik Data Live dari Supabase
+  // Tarik Data Live dari Supabase View c2_cost_transactions
   const fetchExceptionsFromSupabase = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -287,29 +288,32 @@ export default function CostExceptionPage() {
         const actual = Number(item.actual_cost || 0);
         const variance = Number(item.variance || 0);
 
-        if (!item.has_evidence) {
+        // Hierarki Klasifikasi Mutually Exclusive Selaras Dashboard & FR-003
+        if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
+          tag = "Duplicate Data";
+          prio = "Critical";
+        } else if (!item.has_evidence) {
           tag = "Missing Evidence";
           prio = "High";
+        } else if (variance > 0) {
+          tag = "Over Budget";
+          prio = variance > 20_000_000 ? "Critical" : "High";
         } else if (actual >= Number(ruleHighCostLimit)) {
           tag = "High Cost";
           prio = "Critical";
-        } else if (!item.is_job_matched || item.job_number === "UNMATCHED") {
-          tag = "Duplicate Data";
-          prio = "Medium";
-        } else if (variance > 0) {
-          tag = "Over Budget";
-          prio = variance > 10000000 ? "Critical" : "High";
         }
 
-        const stat: ExceptionStatus = item.review_flag ? "Terbuka" : (item.status as ExceptionStatus) || "Ditinjau";
+        const stat: ExceptionStatus = item.review_flag
+          ? "Terbuka"
+          : (item.status as ExceptionStatus) || "Ditinjau";
 
         const createdTime = new Date(item.created_at || Date.now()).getTime();
         const isSlaExceeded = (Date.now() - createdTime > 24 * 60 * 60 * 1000) && stat !== "Selesai";
 
-        const generatedId = item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`;
+        const generatedId = item.code || (item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`);
 
         return {
-          id: item.code || generatedId,
+          id: generatedId,
           dbId: item.id || `db-${idx}`,
           customer: item.customer_name || "Tanpa Nama Customer",
           jobNumber: item.job_number || "-",
@@ -334,6 +338,19 @@ export default function CostExceptionPage() {
   useEffect(() => {
     fetchExceptionsFromSupabase();
   }, [fetchExceptionsFromSupabase]);
+
+  // Handler "Tinjau Sekarang": Langsung menyaring tabel secara instan tanpa pop-up
+  const handleTinjauSla = () => {
+    setIsSlaFilterActive((prev) => !prev);
+    setSelectedTag("Semua Tipe");
+    setSelectedStatus("Semua Status");
+    setSearch("");
+    setCurrentPage(1);
+
+    setTimeout(() => {
+      document.getElementById("daftar-exception-table")?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  };
 
   // Kalkulasi Metrik Dinamis
   const metrics = useMemo(() => {
@@ -448,27 +465,30 @@ export default function CostExceptionPage() {
     return categories;
   }, [data]);
 
-  // Filter Dinamis
+  // Filter Bar Dinamis
   const filteredData = useMemo(() => {
     return data.filter((item) => {
       const matchSearch =
         item.customer.toLowerCase().includes(search.toLowerCase()) ||
-        item.id.toLowerCase().includes(search.toLowerCase());
+        item.id.toLowerCase().includes(search.toLowerCase()) ||
+        (item.jobNumber && item.jobNumber.toLowerCase().includes(search.toLowerCase()));
 
       const matchTag = selectedTag === "Semua Tipe" || item.tipeMasalah === selectedTag;
       const matchStatus = selectedStatus === "Semua Status" || item.status === selectedStatus;
+      const matchSla = !isSlaFilterActive || (item.slaExceeded && item.status !== "Selesai");
 
-      return matchSearch && matchTag && matchStatus;
+      return matchSearch && matchTag && matchStatus && matchSla;
     });
-  }, [data, search, selectedTag, selectedStatus]);
+  }, [data, search, selectedTag, selectedStatus, isSlaFilterActive]);
 
-  // Pagination Dinamis
+  // Paginasi: Tepat 6 baris per view, maksimal 4 nomor navigasi
   const totalItems = filteredData.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
+  const totalPages = Math.min(4, Math.max(1, Math.ceil(totalItems / itemsPerPage)));
+
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredData.slice(start, start + itemsPerPage);
-  }, [filteredData, currentPage]);
+  }, [filteredData, currentPage, itemsPerPage]);
 
   const getTagPillClass = (tag: AnomalyTag) => {
     switch (tag) {
@@ -516,8 +536,8 @@ export default function CostExceptionPage() {
       {/* Sidebar Navigasi */}
       <Sidebar />
 
-      {/* Konten Utama: Ditambahkan ml-64 dan min-w-0 agar tidak tertimpa sidebar */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
+      {/* Konten Utama */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto">
         {/* Header Modul */}
         <div className="flex items-center justify-between">
           <div>
@@ -675,7 +695,7 @@ export default function CostExceptionPage() {
           )}
         </div>
 
-        {/* Baris SLA Alert & Distribusi Prioritas (dengan Skeleton) */}
+        {/* Baris SLA Alert & Distribusi Prioritas */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
           {isLoading ? (
             <>
@@ -703,7 +723,7 @@ export default function CostExceptionPage() {
             </>
           ) : (
             <>
-              {/* Banner SLA 24 Jam */}
+              {/* Banner SLA 24 Jam dengan Aksi Filter Otomatis */}
               {metrics.criticalSlaCount > 0 ? (
                 <div className="flex items-center justify-between rounded-xl border border-[#fecdd3] bg-[#fff1f2] p-5 shadow-sm">
                   <div className="flex items-center gap-3.5">
@@ -721,13 +741,10 @@ export default function CostExceptionPage() {
                   </div>
 
                   <button
-                    onClick={() => {
-                      setSelectedTag("Semua Tipe");
-                      setSelectedStatus("Terbuka");
-                    }}
-                    className="rounded-lg bg-[#e11d48] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#be123c] active:scale-95"
+                    onClick={handleTinjauSla}
+                    className="rounded-lg bg-[#e11d48] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#be123c] active:scale-95 cursor-pointer shrink-0 ml-3"
                   >
-                    Tinjau Sekarang
+                    {isSlaFilterActive ? "Tampilkan Semua" : "Tinjau Sekarang"}
                   </button>
                 </div>
               ) : (
@@ -786,11 +803,25 @@ export default function CostExceptionPage() {
         </div>
 
         {/* Tabel Daftar Exception */}
-        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div id="daftar-exception-table" className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           {/* Header Tabel & Filter Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
+                {isSlaFilterActive && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-[10px] font-bold text-rose-700">
+                    <span>SLA &gt; 24 Jam ({filteredData.length} item)</span>
+                    <button
+                      onClick={() => setIsSlaFilterActive(false)}
+                      className="hover:text-rose-950 font-bold"
+                      title="Hapus filter SLA"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-slate-400">
                 Data real-time disinkronkan dengan database Supabase
               </p>
@@ -808,7 +839,7 @@ export default function CostExceptionPage() {
                     setSearch(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-800 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
+                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-500 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
                 />
               </div>
 
@@ -846,7 +877,7 @@ export default function CostExceptionPage() {
             </div>
           </div>
 
-          {/* Tabel Baris Anomali */}
+          {/* Tabel Baris Anomali (Tepat 6 Baris Sesuai Batasan) */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -886,7 +917,9 @@ export default function CostExceptionPage() {
                 ) : paginatedData.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
-                      Tidak ada data exception yang ditemukan di Supabase.
+                      {isSlaFilterActive
+                        ? "Tidak ada data exception yang melebihi batas waktu SLA 24 jam."
+                        : "Tidak ada data exception yang ditemukan di Supabase."}
                     </td>
                   </tr>
                 ) : (
@@ -935,7 +968,7 @@ export default function CostExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Pagination */}
+          {/* Footer Pagination: Terkunci Tepat Maksimal 4 Angka (1 2 3 4 >) */}
           <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -949,26 +982,28 @@ export default function CostExceptionPage() {
                   {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
                 </p>
 
-                <div className="flex items-center rounded-full border border-slate-300 px-3 py-1 gap-3">
+                <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
                   {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((num) => (
                     <button
                       key={num}
                       onClick={() => setCurrentPage(num)}
                       className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
                         currentPage === num
-                          ? "bg-[#0a7ebf] text-white"
+                          ? "bg-[#0a7ebf] text-white font-bold"
                           : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
                       {num}
                     </button>
                   ))}
+
                   <button
                     disabled={currentPage >= totalPages}
                     onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                    className="text-slate-500 hover:text-slate-900 disabled:opacity-30"
+                    className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
+                    title="Halaman Berikutnya"
                   >
-                    <ChevronRight className="h-3.5 w-3.5" />
+                    <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
                   </button>
                 </div>
               </>

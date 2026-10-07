@@ -8,7 +8,6 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   FileText,
   Download,
   Bell,
@@ -30,17 +29,21 @@ import Sidebar from "@/components/sidebar";
 import CustomDropdown, { DropdownOption } from "../dashboard/CustomDropdown";
 import { supabase } from "@/lib/supabase";
 
+// Interface Record Transaksi Memenuhi 7 Atribut Baku FR-CCR2-001-02
 export interface TransactionRecord {
   id: string;
   recordId: string;
-  customerName: string;
-  category: string;
-  amount: number;
-  status: "Valid" | "Warning" | "Invalid";
+  voucherNo: string;        // Atribut 1: Nomor / Tautan Bukti Transaksi
+  periodMonth: string;      // Atribut 2: Periode Bulan
+  branchCode: string;       // Atribut 3: Cabang Operasional
+  customerName: string;     // Atribut 4: Nama Customer
+  jobNumber: string;        // Atribut 5: Nomor Pekerjaan (Job Number)
+  category: string;         // Atribut 6: Kategori Biaya
+  amount: number;           // Atribut 7: Nominal Biaya
+  hasEvidence: boolean;     // Kelengkapan Bukti Fisik
+  evidenceUrl?: string | null;
+  status: "Valid" | "Invalid";
   reasons: string[];
-  jobNumber?: string;
-  hasEvidence?: boolean;
-  voucherNo?: string;
 }
 
 const MONTH_NAMES_ID = [
@@ -59,6 +62,13 @@ const defaultJenisOptions: DropdownOption[] = [
   { value: "Monthly Sales C1", label: "Monthly Sales C1" },
 ];
 
+const defaultCabangOptions: DropdownOption[] = [
+  { value: "Semua Cabang", label: "Semua Cabang" },
+  { value: "Jakarta Pusat", label: "Jakarta Pusat" },
+  { value: "Surabaya", label: "Surabaya" },
+  { value: "Semarang", label: "Semarang" },
+];
+
 const formatRupiah = (val: number) => `Rp ${val.toLocaleString("id-ID")}`;
 
 const formatCompactRupiah = (val: number) => {
@@ -73,7 +83,7 @@ const formatCompactRupiah = (val: number) => {
 };
 
 // =========================================================================
-// SUB-KOMPONEN: SKELETON LOADERS
+// SUB-KOMPONEN: SKELETON LOADERS (3 KARTU KPI)
 // =========================================================================
 function KpiSkeletonCard() {
   return (
@@ -103,7 +113,7 @@ function TableSkeletonRow() {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (REAL-TIME DARI SUPABASE)
+// SUB-KOMPONEN: NOTIFICATION POPOVER
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -137,7 +147,7 @@ function NotificationPopover({
         overBudget++;
         overBudgetSum += actual;
       }
-      if (actual >= 50_000_000) {
+      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
         highCost++;
         highCostSum += actual;
       }
@@ -147,7 +157,9 @@ function NotificationPopover({
       }
     });
 
-    const total = overBudget + highCost + missingEvidence;
+    const total = dbExceptions.filter(
+      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
+    ).length;
 
     return {
       total,
@@ -229,7 +241,6 @@ function NotificationPopover({
             </div>
           ) : (
             <>
-              {/* Over Budget */}
               <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <TrendingUp className="h-4 w-4" />
@@ -250,7 +261,6 @@ function NotificationPopover({
                 </div>
               </div>
 
-              {/* High Cost */}
               <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <AlertCircle className="h-4 w-4" />
@@ -271,7 +281,6 @@ function NotificationPopover({
                 </div>
               </div>
 
-              {/* Missing Evidence */}
               <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
                   <FileText className="h-4 w-4" />
@@ -330,8 +339,8 @@ export default function DataUploadPage() {
 
   const [periode, setPeriode] = useState<string>(currentLivePeriod);
   const [jenis, setJenis] = useState("Monthly Cost C2");
-  const [entitas, setEntitas] = useState("");
-  const [dynamicEntitasOptions, setDynamicEntitasOptions] = useState<DropdownOption[]>([]);
+  const [cabangOperasional, setCabangOperasional] = useState("Semua Cabang");
+  const [dynamicCabangOptions, setDynamicCabangOptions] = useState<DropdownOption[]>(defaultCabangOptions);
 
   // State Loading & Sinkronisasi
   const [isLoading, setIsLoading] = useState(true);
@@ -347,19 +356,20 @@ export default function DataUploadPage() {
   const [loadedFile, setLoadedFile] = useState<{
     name: string;
     size: string;
+    rawBytes: number;
     rowCount: number;
   } | null>(null);
 
-  // State Baris Data
+  // State Baris Data & Filter Tab (Semua | Invalid | Valid)
   const [records, setRecords] = useState<TransactionRecord[]>([]);
-  const [filterTab, setFilterTab] = useState<"Semua" | "Invalid" | "Warning">("Semua");
+  const [filterTab, setFilterTab] = useState<"Semua" | "Invalid" | "Valid">("Semua");
   const [isCommitting, setIsCommitting] = useState(false);
   const [commitSuccessData, setCommitSuccessData] = useState<{
     batchId: string;
     count: number;
   } | null>(null);
 
-  // Tarik Data Nyata Supabase dengan delay 800ms agar skeleton terlihat
+  // Tarik Data Live Supabase untuk Referensi & Notifikasi
   const loadDatabaseData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -367,16 +377,16 @@ export default function DataUploadPage() {
 
       const [res] = await Promise.all([
         supabase.from("c2_cost_transactions").select("*").order("created_at", { ascending: false }),
-        new Promise((resolve) => setTimeout(resolve, 800)), // Jeda waktu agar skeleton tampil jelas
+        new Promise((resolve) => setTimeout(resolve, 600)),
       ]);
 
       if (!res.error && res.data) {
         setDbExceptions(res.data);
-        const uniqueEntities = Array.from(new Set(res.data.map((d) => d.customer_name).filter(Boolean)));
-        if (uniqueEntities.length > 0) {
-          const opts = uniqueEntities.map((name) => ({ value: name, label: name }));
-          setDynamicEntitasOptions(opts);
-          if (!entitas) setEntitas(opts[0].value);
+        const uniqueBranches = Array.from(new Set(res.data.map((d) => d.branch_code).filter(Boolean)));
+        if (uniqueBranches.length > 0) {
+          const opts: DropdownOption[] = [{ value: "Semua Cabang", label: "Semua Cabang" }];
+          uniqueBranches.forEach((b) => opts.push({ value: b, label: b }));
+          setDynamicCabangOptions(opts);
         }
       }
     } catch (e) {
@@ -385,29 +395,30 @@ export default function DataUploadPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, [entitas]);
+  }, []);
 
   useEffect(() => {
     loadDatabaseData();
   }, [loadDatabaseData]);
 
-  // Kalkulasi KPI Dinamis
+  // Kalkulasi KPI Dinamis Hasil Parsing (Hanya Valid & Invalid)
   const kpiCounts = useMemo(() => {
     const total = records.length;
     const valid = records.filter((r) => r.status === "Valid").length;
     const invalid = records.filter((r) => r.status === "Invalid").length;
-    const warning = records.filter((r) => r.status === "Warning").length;
-    const processable = valid + warning;
+    const processable = valid;
 
-    return { total, valid, invalid, warning, processable };
+    return { total, valid, invalid, processable };
   }, [records]);
 
+  // Filter daftar baris tabel sesuai filter tab yang aktif
   const displayedRecords = useMemo(() => {
     if (filterTab === "Invalid") return records.filter((r) => r.status === "Invalid");
-    if (filterTab === "Warning") return records.filter((r) => r.status === "Warning");
+    if (filterTab === "Valid") return records.filter((r) => r.status === "Valid");
     return records;
   }, [records, filterTab]);
 
+  // Unduh Template Sesuai Format 7 Atribut Baku FR-CCR2-001
   const handleDownloadTemplate = () => {
     const csvContent =
       "data:text/csv;charset=utf-8," +
@@ -429,6 +440,7 @@ export default function DataUploadPage() {
     document.body.removeChild(link);
   };
 
+  // Engine Validasi File: Mendeteksi 7 Atribut Utama FR-CCR2-001
   const processUploadedFile = async (file: File) => {
     setCommitSuccessData(null);
     setIsValidating(true);
@@ -443,21 +455,35 @@ export default function DataUploadPage() {
       if (file.name.toLowerCase().endsWith(".csv")) {
         const text = await file.text();
         const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-        setProgress(50);
-        setValidationStage("Memeriksa format & duplikasi data...");
+        setProgress(45);
+        setValidationStage("Memeriksa format & skema 7 atribut...");
+
+        const delimiter = lines[0].includes(";") ? ";" : ",";
+        const headerCols = lines[0].split(delimiter).map((h) => h.trim().toLowerCase().replace(/^["']|["']$/g, ""));
+
+        const vIdx = headerCols.findIndex((h) => h.includes("voucher") || h.includes("id"));
+        const pIdx = headerCols.findIndex((h) => h.includes("period") || h.includes("bulan"));
+        const bIdx = headerCols.findIndex((h) => h.includes("branch") || h.includes("cabang") || h.includes("region"));
+        const cIdx = headerCols.findIndex((h) => h.includes("customer") || h.includes("pelanggan") || h.includes("entitas"));
+        const jIdx = headerCols.findIndex((h) => h.includes("job"));
+        const catIdx = headerCols.findIndex((h) => h.includes("cat") || h.includes("kategori"));
+        const aIdx = headerCols.findIndex((h) => h.includes("amount") || h.includes("cost") || h.includes("nominal"));
+        const eIdx = headerCols.findIndex((h) => h.includes("evidence") || h.includes("bukti"));
 
         for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(",").map((c) => c.trim().replace(/^["']|["']$/g, ""));
-          if (cols.length < 5) continue;
+          const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^["']|["']$/g, ""));
+          if (cols.length < 4) continue;
 
-          const voucherNo = cols[0] || `VCH-${String(i).padStart(4, "0")}`;
-          const customerName = cols[3] || "PT Nusantara Retail";
-          const jobNumber = cols[4] || "UNMATCHED";
-          const category = cols[5] || "Operasional";
-          const rawAmount = parseFloat(cols[6] || "0");
-          const hasEvidence = cols[7]?.toUpperCase() === "TRUE" || cols[7] === "1";
+          const voucherNo = cols[vIdx !== -1 ? vIdx : 0] || `VCH-${String(i).padStart(4, "0")}`;
+          const periodMonth = cols[pIdx !== -1 ? pIdx : 1] || periode;
+          const branchCode = cols[bIdx !== -1 ? bIdx : 2] || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional);
+          const customerName = cols[cIdx !== -1 ? cIdx : 3] || "PT Nusantara Retail";
+          const jobNumber = cols[jIdx !== -1 ? jIdx : 4] || "UNMATCHED";
+          const category = cols[catIdx !== -1 ? catIdx : 5] || "TRUCKING";
+          const rawAmount = parseFloat((cols[aIdx !== -1 ? aIdx : 6] || "0").replace(/[^0-9.-]+/g, ""));
+          const hasEvidence = cols[eIdx !== -1 ? eIdx : 7]?.toUpperCase() === "TRUE" || cols[eIdx !== -1 ? eIdx : 7] === "1";
 
-          let status: "Valid" | "Warning" | "Invalid" = "Valid";
+          let status: "Valid" | "Invalid" = "Valid";
           const reasons: string[] = [];
 
           if (isNaN(rawAmount) || rawAmount <= 0) {
@@ -465,27 +491,32 @@ export default function DataUploadPage() {
             reasons.push("Nominal tidak valid / negatif");
           }
 
-          if (jobNumber === "UNMATCHED" || jobNumber.includes("UNKNOWN")) {
-            if (status !== "Invalid") status = "Warning";
-            reasons.push("JOB NOT FOUND");
+          const isJobInvalid = !jobNumber || jobNumber === "UNMATCHED" || jobNumber === "-" || jobNumber.includes("UNKNOWN");
+          if (isJobInvalid) {
+            reasons.push("JOB NOT FOUND (Belum sinkron CRM)");
           }
 
           if (!hasEvidence) {
-            if (status !== "Invalid") status = "Warning";
-            reasons.push("MISSING EVIDENCE");
+            reasons.push("MISSING EVIDENCE (Bukti kuitansi kosong)");
+          }
+
+          if (rawAmount >= 50_000_000) {
+            reasons.push("HIGH COST (Nominal tunggal >= 50 jt)");
           }
 
           parsedList.push({
             id: `row-${i}`,
-            recordId: `C2-SEP-${String(i).padStart(4, "0")}`,
+            recordId: `C2-ROW-${String(i).padStart(4, "0")}`,
+            voucherNo,
+            periodMonth,
+            branchCode,
             customerName,
+            jobNumber,
             category,
             amount: isNaN(rawAmount) ? 0 : rawAmount,
+            hasEvidence,
             status,
             reasons: reasons.length ? reasons : ["Semua atribut valid"],
-            jobNumber,
-            hasEvidence,
-            voucherNo,
           });
         }
       } else if (file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls")) {
@@ -506,35 +537,50 @@ export default function DataUploadPage() {
           if (!values || values.length < 5) return;
 
           const voucher = String(values[1] || `VCH-${String(rowIdx).padStart(4, "0")}`);
-          const cust = String(values[4] || values[2] || "PT Nusantara Retail");
+          const pMonth = String(values[2] || periode);
+          const bCode = String(values[3] || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional));
+          const cust = String(values[4] || "PT Nusantara Retail");
           const job = String(values[5] || "AENAT/2606/0212");
-          const cat = String(values[6] || "Transportasi");
-          const amt = Number(values[7] || 10000000);
-          const hasEvidenceVal = String(values[8]).toUpperCase() === "TRUE";
+          const cat = String(values[6] || "TRUCKING");
+          const amt = Number(String(values[7] || "10000000").replace(/[^0-9.-]+/g, ""));
+          const hasEvidenceVal = String(values[8]).toUpperCase() === "TRUE" || values[8] === true;
 
-          let st: "Valid" | "Warning" | "Invalid" = "Valid";
-          if (amt <= 0) st = "Invalid";
-          else if (!hasEvidenceVal || job === "UNMATCHED") st = "Warning";
+          let st: "Valid" | "Invalid" = "Valid";
+          const reasons: string[] = [];
+
+          if (isNaN(amt) || amt <= 0) {
+            st = "Invalid";
+            reasons.push("Nominal tidak valid");
+          }
+          if (!job || job === "UNMATCHED" || job === "-") {
+            reasons.push("JOB NOT FOUND");
+          }
+          if (!hasEvidenceVal) {
+            reasons.push("MISSING EVIDENCE");
+          }
+          if (amt >= 50_000_000) {
+            reasons.push("HIGH COST");
+          }
 
           parsedList.push({
             id: `row-${rowIdx}`,
-            recordId: `C2-SEP-${String(rowIdx).padStart(4, "0")}`,
-            customerName: cust,
-            category: cat,
-            amount: amt,
-            status: st,
-            reasons: [st === "Valid" ? "Semua atribut valid" : "Perlu verifikasi"],
-            jobNumber: job,
-            hasEvidence: hasEvidenceVal,
+            recordId: `C2-ROW-${String(rowIdx).padStart(4, "0")}`,
             voucherNo: voucher,
+            periodMonth: pMonth,
+            branchCode: bCode,
+            customerName: cust,
+            jobNumber: job,
+            category: cat,
+            amount: isNaN(amt) ? 0 : amt,
+            hasEvidence: hasEvidenceVal,
+            status: st,
+            reasons: reasons.length ? reasons : ["Semua atribut valid"],
           });
           rowIdx++;
         });
       }
 
-      // Berikan jeda 600ms agar skeleton tabel terlihat saat parsing
-      await new Promise((r) => setTimeout(r, 600));
-
+      await new Promise((r) => setTimeout(r, 500));
       setProgress(100);
       setValidationStage("Pemeriksaan selesai.");
 
@@ -542,6 +588,7 @@ export default function DataUploadPage() {
       setLoadedFile({
         name: file.name,
         size: `${mb} MB`,
+        rawBytes: file.size,
         rowCount: parsedList.length,
       });
       setRecords(parsedList);
@@ -553,46 +600,112 @@ export default function DataUploadPage() {
     }
   };
 
+  // Simpan Data: Masuk ke c2_cost_actual_transactions, c2_cost_ingestion_batches, & c2_cost_exceptions
   const handleCommitData = async () => {
     try {
       setIsCommitting(true);
 
-      const processableList = records.filter((r) => r.status !== "Invalid");
+      const processableList = records.filter((r) => r.status === "Valid");
       if (processableList.length === 0) return;
 
-      const payload = processableList.map((r) => ({
-        job_number: r.jobNumber || "AENAT/2606/0212",
-        customer_name: r.customerName,
-        branch_code: "Jakarta Pusat",
-        cost_category: r.category.toUpperCase().includes("GUDANG")
-          ? "STORAGE"
-          : r.category.toUpperCase().includes("OPERASIONAL")
-          ? "HANDLING"
-          : "TRUCKING",
-        period_month: periode,
-        planned_cost: r.amount,
-        actual_cost: r.amount,
-        has_evidence: r.hasEvidence !== false,
-        reconciliation_result: r.status === "Warning" ? "OVER" : "MATCH",
-        review_flag: r.status === "Warning",
-        exception_tags: r.status === "Warning" ? ["MISSING_EVIDENCE"] : [],
-        voucher_no: r.voucherNo || r.recordId,
-        description: `Import file ${loadedFile?.name || "manual_upload"}`,
-      }));
+      // 1. Siapkan Payload Transaksi untuk Tabel Fisik c2_cost_actual_transactions
+      const payload = processableList.map((r) => {
+        const isJobMissing = !r.jobNumber || r.jobNumber === "UNMATCHED" || r.jobNumber === "-" || r.jobNumber.includes("UNKNOWN");
+        const hasMissingEvidence = !r.hasEvidence;
+        const isHighCost = r.amount >= 50_000_000;
+        
+        const tags: string[] = [];
+        if (isJobMissing) tags.push("JOB_NOT_FOUND");
+        if (hasMissingEvidence) tags.push("MISSING_EVIDENCE");
+        if (isHighCost) tags.push("HIGH_COST");
 
-      const { error } = await supabase.from("cost_actual_transactions").insert(payload);
+        const hasAnyAnomaly = tags.length > 0;
 
-      if (error) {
-        console.error("Gagal simpan Supabase:", error.message);
-      } else {
-        setCommitSuccessData({
-          batchId: `BATCH-${Date.now().toString().slice(-6)}`,
-          count: processableList.length,
-        });
-        loadDatabaseData();
+        return {
+          voucher_no: r.voucherNo || r.recordId,
+          job_number: r.jobNumber || "UNMATCHED",
+          customer_name: r.customerName,
+          branch_code: r.branchCode || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional),
+          cost_category: r.category.toUpperCase().includes("GUDANG") || r.category.toUpperCase().includes("STOR")
+            ? "STORAGE"
+            : r.category.toUpperCase().includes("OPERASIONAL") || r.category.toUpperCase().includes("HANDL")
+            ? "HANDLING"
+            : "TRUCKING",
+          period_month: r.periodMonth || periode,
+          planned_cost: hasAnyAnomaly ? Math.round(r.amount * 0.9) : r.amount,
+          actual_cost: r.amount,
+          variance: hasAnyAnomaly ? Math.round(r.amount * 0.1) : 0,
+          has_evidence: r.hasEvidence !== false,
+          evidence_url: r.hasEvidence ? "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf" : null,
+          reconciliation_result: isJobMissing ? "JOB_NOT_FOUND" : hasAnyAnomaly ? "OVER" : "MATCH",
+          review_flag: hasAnyAnomaly,
+          exception_tags: tags,
+          description: `Import file ${loadedFile?.name || "manual_upload"}`,
+          status: hasAnyAnomaly ? "Terbuka" : "Selesai",
+        };
+      });
+
+      // 2. Insert ke Tabel Transaksi Utama C2
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("c2_cost_actual_transactions")
+        .insert(payload)
+        .select("id, job_number, actual_cost, planned_cost, review_flag, exception_tags");
+
+      if (insertError) {
+        throw new Error(insertError.message);
       }
-    } catch (err) {
-      console.error(err);
+
+      // 3. Catat Batch Ingesti ke c2_cost_ingestion_batches (TR-001)
+      const batchPayload = {
+        file_name: loadedFile?.name || "manual_upload",
+        file_size_bytes: loadedFile?.rawBytes || 1024,
+        period_month: periode,
+        branch_code: cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional,
+        total_rows: kpiCounts.total,
+        valid_rows: kpiCounts.valid,
+        error_rows: kpiCounts.invalid,
+        total_amount: processableList.reduce((sum, r) => sum + r.amount, 0),
+        status: "COMMITTED",
+      };
+
+      const { data: batchData } = await supabase
+        .from("c2_cost_ingestion_batches")
+        .insert(batchPayload)
+        .select("batch_id")
+        .single();
+
+      // 4. Catat Log Anomali ke c2_cost_exceptions (TR-003)
+      if (insertedRows && insertedRows.length > 0) {
+        const exceptionRows = insertedRows
+          .filter((row: any) => row.review_flag)
+          .map((row: any) => ({
+            transaction_id: row.id,
+            job_number: row.job_number,
+            exception_tag: row.exception_tags?.[0] || "OVER_BUDGET",
+            budget_threshold: row.planned_cost,
+            actual_amount: row.actual_cost,
+            is_resolved: false,
+            resolution_notes: "Terdeteksi otomatis saat validasi ingesti berkas",
+          }));
+
+        if (exceptionRows.length > 0) {
+          await supabase.from("c2_cost_exceptions").insert(exceptionRows);
+        }
+      }
+
+      const generatedBatchId = batchData?.batch_id
+        ? `BATCH-${String(batchData.batch_id).slice(-6).toUpperCase()}`
+        : `BATCH-${Date.now().toString().slice(-6)}`;
+
+      setCommitSuccessData({
+        batchId: generatedBatchId,
+        count: processableList.length,
+      });
+
+      loadDatabaseData();
+    } catch (err: any) {
+      console.error("Gagal simpan Supabase:", err);
+      alert(`Gagal menyimpan data: ${err.message}`);
     } finally {
       setIsCommitting(false);
     }
@@ -607,7 +720,6 @@ export default function DataUploadPage() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // State loading aktif ketika pertama kali buka halaman atau saat berkas sedang divalidasi
   const isDisplayLoading = isLoading || isValidating;
 
   return (
@@ -701,7 +813,7 @@ export default function DataUploadPage() {
           </div>
         )}
 
-        {/* Filter Bar Parameter Ingesti */}
+        {/* Filter Bar Parameter Ingesti (Sesuai Atribut Baku FR-001) */}
         <div className="mt-5 flex flex-wrap items-end gap-3">
           <div className="w-52">
             <CustomDropdown
@@ -723,10 +835,10 @@ export default function DataUploadPage() {
 
           <div className="w-56">
             <CustomDropdown
-              label="Entitas"
-              value={entitas}
-              options={dynamicEntitasOptions}
-              onChange={setEntitas}
+              label="Cabang Operasional"
+              value={cabangOperasional}
+              options={dynamicCabangOptions}
+              onChange={setCabangOperasional}
             />
           </div>
 
@@ -863,11 +975,10 @@ export default function DataUploadPage() {
           </div>
         </div>
 
-        {/* 4 Kartu KPI Ringkasan (Skeleton Aktif saat Loading) */}
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {/* 3 Kartu KPI Ringkasan: TOTAL BARIS, VALID, INVALID */}
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
           {isDisplayLoading ? (
             <>
-              <KpiSkeletonCard />
               <KpiSkeletonCard />
               <KpiSkeletonCard />
               <KpiSkeletonCard />
@@ -935,31 +1046,11 @@ export default function DataUploadPage() {
                   Format atau nilai tidak sesuai
                 </p>
               </div>
-
-              {/* WARNING */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    WARNING
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#fef3c7] text-[#d97706]">
-                    <AlertTriangle className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <h2 className="text-2xl font-bold text-slate-900">
-                    {kpiCounts.warning}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  Perlu konfirmasi sebelum proses
-                </p>
-              </div>
             </>
           )}
         </div>
 
-        {/* Tabel Preview Data (Skeleton Aktif saat Loading) */}
+        {/* Tabel Preview Data */}
         <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between pb-4 border-b border-slate-100">
             <div>
@@ -969,6 +1060,7 @@ export default function DataUploadPage() {
               </p>
             </div>
 
+            {/* Tombol Tab Filter: Semua, Invalid, Valid (Hijau) */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setFilterTab("Semua")}
@@ -993,14 +1085,14 @@ export default function DataUploadPage() {
               </button>
 
               <button
-                onClick={() => setFilterTab("Warning")}
+                onClick={() => setFilterTab("Valid")}
                 className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
-                  filterTab === "Warning"
-                    ? "bg-[#fef3c7] text-[#d97706]"
-                    : "bg-amber-50/70 text-[#d97706] hover:bg-amber-100"
+                  filterTab === "Valid"
+                    ? "bg-[#dcfce7] text-[#16a34a]"
+                    : "bg-emerald-50/70 text-[#16a34a] hover:bg-emerald-100"
                 }`}
               >
-                Warning {kpiCounts.warning}
+                Valid {kpiCounts.valid.toLocaleString("id-ID")}
               </button>
             </div>
           </div>
@@ -1052,8 +1144,6 @@ export default function DataUploadPage() {
                           className={`inline-block rounded-full px-3 py-0.5 text-[11px] font-semibold ${
                             row.status === "Valid"
                               ? "bg-[#dcfce7] text-[#16a34a]"
-                              : row.status === "Warning"
-                              ? "bg-[#fef3c7] text-[#d97706]"
                               : "bg-[#ffe4e6] text-[#e11d48]"
                           }`}
                         >

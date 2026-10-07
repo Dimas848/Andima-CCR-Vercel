@@ -20,13 +20,13 @@ import {
   ArrowRight,
   Loader2,
   FileQuestion,
+  ExternalLink,
+  ShieldCheck,
+  Check,
 } from "lucide-react";
 
-import sidebar from "@/components/sidebar";
+import Sidebar from "@/components/sidebar";
 import { supabase } from "@/lib/supabase";
-
-// Alias huruf kapital untuk validitas sintaks JSX React
-const Sidebar = sidebar;
 
 // Interface Transaksi Bukti dari Database Supabase
 interface EvidenceTransaction {
@@ -259,6 +259,8 @@ function EvidenceContent() {
   const [selectedTx, setSelectedTx] = useState<EvidenceTransaction | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // State Kontrol Viewer
   const [zoom, setZoom] = useState<number>(100);
@@ -326,6 +328,77 @@ function EvidenceContent() {
     fetchEvidenceData();
   }, [fetchEvidenceData]);
 
+  // Handler Verifikasi Bukti Langsung ke Database Supabase
+  const handleToggleVerification = async () => {
+    if (!selectedTx) return;
+
+    try {
+      setIsVerifying(true);
+      const newVerifiedStatus = !selectedTx.has_evidence;
+
+      // 1. Perbarui tabel fisik transaksi utama
+      const { error: txError } = await supabase
+        .from("c2_cost_actual_transactions")
+        .update({
+          has_evidence: newVerifiedStatus,
+          review_flag: !newVerifiedStatus,
+          status: newVerifiedStatus ? "Selesai" : "Ditinjau",
+          description: newVerifiedStatus
+            ? `Bukti transaksi diverifikasi manual pada ${new Date().toLocaleDateString("id-ID")}`
+            : "Verifikasi bukti dibatalkan untuk pemeriksaan ulang",
+        })
+        .eq("id", selectedTx.id);
+
+      if (txError) throw txError;
+
+      // 2. Perbarui catatan anomali di c2_cost_exceptions jika ada
+      await supabase
+        .from("c2_cost_exceptions")
+        .update({
+          is_resolved: newVerifiedStatus,
+          resolution_notes: newVerifiedStatus
+            ? "Kuitansi fisik terverifikasi lengkap"
+            : "Menunggu kelengkapan bukti baru",
+        })
+        .eq("transaction_id", selectedTx.id);
+
+      // Perbarui state lokal
+      setSelectedTx((prev) =>
+        prev
+          ? {
+              ...prev,
+              has_evidence: newVerifiedStatus,
+              review_flag: !newVerifiedStatus,
+            }
+          : null
+      );
+
+      setAllTransactions((prev) =>
+        prev.map((t) =>
+          t.id === selectedTx.id
+            ? {
+                ...t,
+                has_evidence: newVerifiedStatus,
+                review_flag: !newVerifiedStatus,
+              }
+            : t
+        )
+      );
+
+      setToastMessage(
+        newVerifiedStatus
+          ? `Bukti transaksi ${selectedTx.voucher_no} berhasil diverifikasi!`
+          : `Status verifikasi ${selectedTx.voucher_no} telah dibatalkan.`
+      );
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err: any) {
+      console.error("Gagal verifikasi dokumen:", err);
+      alert(`Gagal memperbarui database: ${err.message}`);
+    } finally {
+      setIsVerifying(false);
+    }
+  };
+
   // Kategori Notifikasi Dinamis
   const notificationCategories = useMemo(() => {
     const list = [];
@@ -344,7 +417,7 @@ function EvidenceContent() {
       });
     }
 
-    const highCost = allTransactions.filter((r) => r.actual_cost >= 50000000);
+    const highCost = allTransactions.filter((r) => r.actual_cost >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -484,7 +557,7 @@ function EvidenceContent() {
       </div>
 
       {/* Konten Utama */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto print:ml-0 print:p-0">
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto print:ml-0 print:p-0">
         {/* Header Dasbor */}
         <div className="flex items-center justify-between print:hidden">
           <div>
@@ -549,6 +622,19 @@ function EvidenceContent() {
           </div>
         </div>
 
+        {/* Toast Notifikasi Verifikasi */}
+        {toastMessage && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in print:hidden">
+            <div className="flex items-center gap-2.5">
+              <Check className="h-5 w-5 text-emerald-600" />
+              <p className="text-xs font-bold text-emerald-950">{toastMessage}</p>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-950">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* Toolbar Berkas & Kontrol Pratinjau */}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm print:hidden">
           {isLoading ? (
@@ -599,7 +685,7 @@ function EvidenceContent() {
                 onClick={handleZoomOut}
                 disabled={isLoading || !activeDoc}
                 title="Perkecil"
-                className="flex h-7 w-7 items-center justify-center rounded text-slate-600 hover:bg-slate-100 transition disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded text-slate-600 hover:bg-slate-100 transition disabled:opacity-40 cursor-pointer"
               >
                 <Minus className="h-3.5 w-3.5" />
               </button>
@@ -614,7 +700,7 @@ function EvidenceContent() {
                 onClick={handleZoomIn}
                 disabled={isLoading || !activeDoc}
                 title="Perbesar"
-                className="flex h-7 w-7 items-center justify-center rounded text-slate-600 hover:bg-slate-100 transition disabled:opacity-40"
+                className="flex h-7 w-7 items-center justify-center rounded text-slate-600 hover:bg-slate-100 transition disabled:opacity-40 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
               </button>
@@ -623,7 +709,7 @@ function EvidenceContent() {
             <button
               onClick={handleRotate}
               disabled={isLoading || !activeDoc}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
             >
               <RotateCw className="h-3.5 w-3.5 text-slate-600" />
               <span>Putar</span>
@@ -632,7 +718,7 @@ function EvidenceContent() {
             <button
               onClick={handleDownload}
               disabled={isLoading || !activeDoc}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5 text-slate-600" />
               <span>Unduh</span>
@@ -690,7 +776,7 @@ function EvidenceContent() {
                 </p>
               </div>
             ) : (
-              /* Wrapper Penampung Geometri Rotasi: Mengadaptasi lebar & tinggi agar kanvas tidak terpotong */
+              /* Wrapper Penampung Geometri Rotasi Yang Sudah Bersih & Presisi */
               <div
                 className="m-auto flex items-center justify-center transition-all duration-300 ease-out shrink-0"
                 style={{
@@ -852,11 +938,39 @@ function EvidenceContent() {
                   </p>
                 </div>
 
+                {/* Tombol Aksi Verifikasi Dinamis ke Supabase */}
+                <div className="mt-3">
+                  <button
+                    disabled={isVerifying}
+                    onClick={handleToggleVerification}
+                    className={`w-full inline-flex items-center justify-center gap-2 rounded-lg py-2 px-3 text-xs font-bold shadow-sm transition active:scale-95 cursor-pointer disabled:opacity-60 ${
+                      activeDoc.isVerified
+                        ? "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        : "bg-emerald-600 text-white hover:bg-emerald-700"
+                    }`}
+                  >
+                    {isVerifying ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : activeDoc.isVerified ? (
+                      <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                    ) : (
+                      <CheckCircle2 className="h-4 w-4 text-white" />
+                    )}
+                    <span>
+                      {isVerifying
+                        ? "Memperbarui database..."
+                        : activeDoc.isVerified
+                        ? "Batalkan Verifikasi Bukti"
+                        : "Verifikasi & Setujui Dokumen"}
+                    </span>
+                  </button>
+                </div>
+
                 {/* Metadata */}
                 <div className="mt-5 space-y-3 text-xs">
                   <div>
                     <p className="text-[10px] font-bold text-slate-400 tracking-wider">NAMA FILE</p>
-                    <p className="mt-0.5 font-medium text-slate-800">{activeDoc.fileName}</p>
+                    <p className="mt-0.5 font-medium text-slate-800 break-all">{activeDoc.fileName}</p>
                   </div>
 
                   <div>
@@ -880,13 +994,101 @@ function EvidenceContent() {
                   </div>
 
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 tracking-wider">ID TRANSAKSI</p>
+                    <p className="text-[10px] font-bold text-slate-400 tracking-wider">ID TRANSAKSI / VOUCHER</p>
                     <p className="mt-0.5 font-mono text-slate-700">{activeDoc.idTransaksi}</p>
                   </div>
                 </div>
+    
+                {/* Tautan Berkas Fisik jika Ada */}
+   
+    {/* MENJADI SEPERTI INI: */}
+<div className="mt-4">
+  <button
+    onClick={() => {
+      // Buka jendela baru yang merender kuitansi/invoice resmi transaksi ini
+      const printWindow = window.open("", "_blank");
+      if (printWindow && activeDoc) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Kuitansi - ${activeDoc.idTransaksi}</title>
+              <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #1e293b; }
+                .container { max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 36px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+                .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0a7ebf; padding-bottom: 16px; margin-bottom: 24px; }
+                .brand { font-size: 18px; font-weight: 800; color: #0f172a; }
+                .sub-brand { font-size: 11px; color: #64748b; }
+                .invoice-title { font-size: 22px; font-weight: 900; color: #0a7ebf; text-align: right; }
+                .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 12px; margin-bottom: 24px; }
+                table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
+                th { background-color: #f1f5f9; padding: 10px 12px; text-align: left; font-size: 11px; color: #475569; }
+                td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+                .total-box { display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; border-top: 2px solid #e2e8f0; padding-top: 14px; color: #e11d48; }
+                .stamp { margin-top: 30px; padding: 12px; background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; color: #059669; font-size: 11px; font-weight: 700; text-align: center; }
+              </style>
+            </head>
+            <body>
+              <div class="container">
+                <div class="header">
+                  <div>
+                    <div class="brand">${activeDoc.invoice.vendorTitle}</div>
+                    <div class="sub-brand">${activeDoc.invoice.vendorSub}</div>
+                  </div>
+                  <div class="invoice-title">INVOICE RESMI</div>
+                </div>
+                <div class="grid">
+                  <div>
+                    <div style="font-weight:700; color:#64748b; font-size:10px; text-transform:uppercase;">Ditagihkan Kepada</div>
+                    <div style="font-weight:700; font-size:13px; margin-top:2px;">${activeDoc.invoice.customerName}</div>
+                    <div style="color:#64748b; font-size:11px;">${activeDoc.invoice.customerAddress}</div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-weight:700;">No: ${activeDoc.invoice.invoiceNo}</div>
+                    <div style="color:#64748b;">Tanggal: ${activeDoc.invoice.invoiceDate}</div>
+                    <div style="color:#64748b;">Jatuh Tempo: ${activeDoc.invoice.dueDate}</div>
+                  </div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>DESKRIPSI OPERASIONAL</th>
+                      <th style="text-align:right;">JUMLAH</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${activeDoc.invoice.items.map((it: any) => `
+                      <tr>
+                        <td>${it.deskripsi}</td>
+                        <td style="text-align:right; font-weight:600;">${it.jumlah}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+                <div class="total-box">
+                  <span>TOTAL TAGIHAN</span>
+                  <span>${activeDoc.invoice.total}</span>
+                </div>
+                <div class="stamp">✓ DOKUMEN RESMI TERSINKRONISASI SISTEM CCR2</div>
+              </div>
+              <script>
+                window.onload = function() { window.print(); };
+              </script>
+            </body>
+          </html>
+        `);
+        printWindow.document.close();
+      }
+    }}
+    className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 py-2 text-xs font-semibold text-[#0a7ebf] hover:bg-slate-100 transition cursor-pointer"
+  >
+    <span>Buka & Cetak Dokumen Asli</span>
+    <ExternalLink className="h-3.5 w-3.5" />
+  </button>
+</div>
 
                 {/* Hasil OCR */}
-                <div className="mt-5 rounded-xl bg-[#f0f9ff] p-3.5 border border-sky-100">
+                <div className="mt-4 rounded-xl bg-[#f0f9ff] p-3.5 border border-sky-100">
                   <p className="text-xs font-bold text-[#0284c7]">{activeDoc.ocrScore}</p>
                   <p className="mt-1 text-[11px] text-[#0369a1] leading-relaxed">
                     {activeDoc.ocrDesc}
@@ -899,14 +1101,14 @@ function EvidenceContent() {
             <div className="mt-6 space-y-2 pt-4 border-t border-slate-100">
               <button
                 onClick={() => router.back()}
-                className="w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
               >
                 Tutup
               </button>
 
               <button
                 onClick={() => router.back()}
-                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#0a7ebf] py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d]"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#0a7ebf] py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] cursor-pointer"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 <span>Kembali</span>

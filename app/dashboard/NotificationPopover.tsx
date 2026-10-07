@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   X,
   TrendingUp,
@@ -9,6 +10,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { CostTransaction } from "./page";
+import { supabase } from "@/lib/supabase";
 
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -25,21 +27,53 @@ export default function NotificationPopover({
   periode = "September 2026",
   onViewAllExceptions,
 }: NotificationPopoverProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
   const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
-  // Kalkulasi Real-time dari Supabase dengan Fallback Nilai Screenshot
+  // State cadangan jika props transactions belum terisi dari komponen induk
+  const [dbTransactions, setDbTransactions] = useState<CostTransaction[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Tarik data langsung dari Supabase jika props transactions kosong saat popover dibuka
+  useEffect(() => {
+    if (transactions && transactions.length > 0) {
+      setDbTransactions(transactions);
+    } else if (isOpen) {
+      const fetchTransactionsFromDb = async () => {
+        setIsLoading(true);
+        try {
+          const { data, error } = await supabase
+            .from("c2_cost_transactions")
+            .select("*")
+            .order("created_at", { ascending: false });
+
+          if (!error && data) {
+            setDbTransactions(data as any);
+          }
+        } catch (err) {
+          console.error("Gagal mengambil data notifikasi:", err);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      fetchTransactionsFromDb();
+    }
+  }, [transactions, isOpen]);
+
+  // Kalkulasi 100% Real-Time dari Database Supabase (Tanpa Hardcoded Fallback)
   const notifData = useMemo(() => {
-    if (!transactions.length) {
-      // Nilai cadangan persis sesuai screenshot jika data database kosong
+    const activeList = dbTransactions.length > 0 ? dbTransactions : transactions;
+
+    if (!activeList || activeList.length === 0) {
       return {
-        totalExceptions: 26,
-        overBudgetCount: 9,
-        overBudgetValue: "Rp 186,2 jt",
-        highCostCount: 7,
-        highCostValue: "Rp 128,7 jt",
-        missingEvidenceCount: 6,
-        missingEvidenceValue: "Rp 42,1 jt",
+        totalExceptions: 0,
+        overBudgetCount: 0,
+        overBudgetValue: "Rp 0",
+        highCostCount: 0,
+        highCostValue: "Rp 0",
+        missingEvidenceCount: 0,
+        missingEvidenceValue: "Rp 0",
       };
     }
 
@@ -50,44 +84,61 @@ export default function NotificationPopover({
     let missingEvidence = 0;
     let missingEvidenceSum = 0;
 
-    transactions.forEach((t) => {
-      // 1. Over Budget: variance > 0
-      if (t.variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
+    activeList.forEach((t: any) => {
+      const actual = Number(t.actual_cost || 0);
+      const variance = Number(t.variance || 0);
+
+      // 1. Over Budget: variance > 0 atau tag OVER_BUDGET
+      if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
         overBudget++;
-        overBudgetSum += t.actual_cost;
+        overBudgetSum += actual;
       }
-      // 2. High Cost: Biaya tunggal di atas ambang batas (contoh: >= Rp 5.000.000)
-      if (t.actual_cost >= 5_000_000) {
+      // 2. High Cost: Biaya tunggal >= Rp 50.000.000 atau tag HIGH_COST
+      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
         highCost++;
-        highCostSum += t.actual_cost;
+        highCostSum += actual;
       }
-      // 3. Missing Evidence: has_evidence == false
+      // 3. Missing Evidence: has_evidence == false atau tag MISSING_EVIDENCE
       if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
         missingEvidence++;
-        missingEvidenceSum += t.actual_cost;
+        missingEvidenceSum += actual;
       }
     });
 
-    const formatJt = (val: number, fallback: string) => {
-      if (val === 0) return fallback;
+    const formatJt = (val: number) => {
+      if (val === 0) return "Rp 0";
+      if (Math.abs(val) >= 1_000_000_000) {
+        return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 2,
+        })} M`;
+      }
       return `Rp ${(val / 1_000_000).toLocaleString("id-ID", {
         minimumFractionDigits: 1,
         maximumFractionDigits: 1,
       })} jt`;
     };
 
-    const total = overBudget + highCost + missingEvidence;
+    // Total unik transaksi anomali yang membutuhkan tindakan perbaikan
+    const totalExceptions = activeList.filter(
+      (t: any) =>
+        t.review_flag ||
+        Number(t.variance || 0) > 0 ||
+        !t.has_evidence ||
+        t.job_number === "UNMATCHED" ||
+        Number(t.actual_cost || 0) >= 50_000_000
+    ).length;
 
     return {
-      totalExceptions: total > 0 ? total : 26,
-      overBudgetCount: overBudget || 9,
-      overBudgetValue: formatJt(overBudgetSum, "Rp 186,2 jt"),
-      highCostCount: highCost || 7,
-      highCostValue: formatJt(highCostSum, "Rp 128,7 jt"),
-      missingEvidenceCount: missingEvidence || 6,
-      missingEvidenceValue: formatJt(missingEvidenceSum, "Rp 42,1 jt"),
+      totalExceptions,
+      overBudgetCount: overBudget,
+      overBudgetValue: formatJt(overBudgetSum),
+      highCostCount: highCost,
+      highCostValue: formatJt(highCostSum),
+      missingEvidenceCount: missingEvidence,
+      missingEvidenceValue: formatJt(missingEvidenceSum),
     };
-  }, [transactions]);
+  }, [dbTransactions, transactions]);
 
   if (!isOpen) return null;
 
@@ -99,21 +150,27 @@ export default function NotificationPopover({
         onClick={onClose}
       />
 
-      {/* Kontainer Popover Notifikasi Persis Sesuai Screenshot */}
-      <div className="absolute right-8 top-16 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl transition-all duration-200 animate-in fade-in slide-in-from-top-2">
+      {/* Kontainer Popover Notifikasi */}
+      <div className="absolute right-8 top-16 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl transition-all duration-200 animate-in fade-in slide-in-from-top-2 text-left">
         {/* Header Notifikasi */}
         <div className="p-5 pb-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {/* Titik Biru Status */}
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {/* Titik Biru Status (Berubah Abu jika Semua Ditandai Dibaca) */}
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isMarkedAllRead || notifData.totalExceptions === 0
+                    ? "bg-slate-300"
+                    : "bg-[#0a7ebf]"
+                }`}
+              />
             </div>
 
             {/* Tombol Tutup Silang */}
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -127,17 +184,17 @@ export default function NotificationPopover({
           </p>
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={() => setIsMarkedAllRead((prev) => !prev)}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tandai belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           {/* Tab Filter: Semua & Belum Dibaca */}
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -147,7 +204,7 @@ export default function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -160,9 +217,29 @@ export default function NotificationPopover({
 
         {/* Daftar Item Notifikasi */}
         <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100">
-          {activeTab === "belum_dibaca" && isMarkedAllRead ? (
+          {isLoading ? (
+            <div className="space-y-4 p-5">
+              {[1, 2, 3].map((idx) => (
+                <div key={idx} className="flex gap-3 animate-pulse">
+                  <div className="h-9 w-9 rounded-xl bg-slate-200 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="flex justify-between">
+                      <div className="h-3.5 w-24 rounded bg-slate-200" />
+                      <div className="h-3.5 w-12 rounded bg-slate-200" />
+                    </div>
+                    <div className="h-4 w-20 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
             <div className="py-10 text-center text-xs text-slate-400">
               Semua notifikasi telah ditandai dibaca.
+            </div>
+          ) : notifData.totalExceptions === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-400">
+              Tidak ada anomali atau exception yang tercatat di database.
             </div>
           ) : (
             <>
@@ -248,9 +325,11 @@ export default function NotificationPopover({
               onClose();
               if (onViewAllExceptions) {
                 onViewAllExceptions();
+              } else {
+                router.push("/cost-exception");
               }
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />

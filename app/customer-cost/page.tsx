@@ -19,14 +19,12 @@ import {
   Search,
   SlidersHorizontal,
   ArrowRight,
+  CheckCircle2,
 } from "lucide-react";
 
-import sidebar from "@/components/sidebar";
+import Sidebar from "@/components/sidebar";
 import CustomDropdown, { DropdownOption } from "../dashboard/CustomDropdown";
 import { supabase } from "@/lib/supabase";
-
-// Alias huruf kapital untuk validitas sintaks JSX React
-const Sidebar = sidebar;
 
 export interface DokumenBukti {
   id: string;
@@ -45,6 +43,8 @@ export interface CustomerTransaction {
   deskripsi: string;
   nominal: number;
   status: "Valid" | "Exception" | "Ditinjau";
+  hasEvidence: boolean;
+  evidenceUrl?: string | null;
 }
 
 export interface CustomerSummaryItem {
@@ -261,17 +261,10 @@ export default function CustomerCostPage() {
   const router = useRouter();
   const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
 
-  const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => [
-    { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
-    { value: getDynamicPeriod(1), label: getDynamicPeriod(1) },
-    { value: getDynamicPeriod(2), label: getDynamicPeriod(2) },
-    { value: getDynamicPeriod(3), label: getDynamicPeriod(3) },
-  ], []);
-
   // State Pelanggan & Periode
   const [selectedCustomer, setSelectedCustomer] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("—");
-  const [periode, setPeriode] = useState<string>(currentLivePeriod);
+  const [periode, setPeriode] = useState<string>("Semua Periode");
 
   // State Kontrol Loading
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -290,12 +283,29 @@ export default function CustomerCostPage() {
 
   const [filterTrxCategory, setFilterTrxCategory] = useState("Semua Kategori");
   const [trxPage, setTrxPage] = useState(1);
+  const trxPerPage = 6;
 
-  // State Data Dinamis Murni
+  // State Data Dinamis
   const [rawTransactions, setRawTransactions] = useState<any[]>([]);
   const [customersList, setCustomersList] = useState<CustomerSummaryItem[]>([]);
   const [transactionsList, setTransactionsList] = useState<CustomerTransaction[]>([]);
   const [documentsList, setDocumentsList] = useState<DokumenBukti[]>([]);
+
+  // Opsi Dropdown Periode Dinamis dari Database
+  const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => {
+    const list: DropdownOption[] = [{ value: "Semua Periode", label: "Semua Periode" }];
+    const periodsFromDb = Array.from(new Set(rawTransactions.map((t) => t.period_month).filter(Boolean)));
+    
+    if (periodsFromDb.length > 0) {
+      periodsFromDb.forEach((p) => list.push({ value: p, label: p }));
+    } else {
+      list.push(
+        { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
+        { value: getDynamicPeriod(1), label: getDynamicPeriod(1) }
+      );
+    }
+    return list;
+  }, [rawTransactions]);
 
   // Tarik Data Nyata dari Supabase View c2_cost_transactions
   const fetchCustomerDataFromSupabase = useCallback(async () => {
@@ -336,7 +346,7 @@ export default function CustomerCostPage() {
         const isExc = Boolean(t.review_flag || variance > 0 || !t.has_evidence || !t.is_job_matched);
 
         const curr = map.get(name) || {
-          idCustomer: t.customer_code || `CUST-${String(idx + 1).padStart(5, "0")}`,
+          idCustomer: t.customer_id ? `CUST-${String(t.customer_id).padStart(4, "0")}` : `CUST-${String(idx + 1).padStart(4, "0")}`,
           total: 0,
           planned: 0,
           variance: 0,
@@ -357,7 +367,7 @@ export default function CustomerCostPage() {
       const aggregated: CustomerSummaryItem[] = Array.from(map.entries()).map(([name, stat]) => ({
         idCustomer: stat.idCustomer,
         namaCustomer: name,
-        segmen: "Logistik",
+        segmen: name.toLowerCase().includes("retail") ? "Retail" : "Logistik",
         totalCost: stat.total,
         budget: stat.planned > 0 ? stat.planned : null,
         variance: stat.planned > 0 ? stat.total - stat.planned : null,
@@ -367,14 +377,11 @@ export default function CustomerCostPage() {
 
       setCustomersList(aggregated);
 
-      // Tetapkan Customer Pertama Secara Otomatis
-      const activeCust = selectedCustomer && map.has(selectedCustomer)
-        ? selectedCustomer
-        : aggregated[0]?.namaCustomer || "";
-
-      setSelectedCustomer(activeCust);
-      const foundCust = aggregated.find((c) => c.namaCustomer === activeCust);
-      setSelectedCustomerId(foundCust?.idCustomer || "—");
+      // Tetapkan Customer Pertama Secara Otomatis jika Belum Ada yang Terpilih
+      setSelectedCustomer((prev) => {
+        if (prev && map.has(prev)) return prev;
+        return aggregated[0]?.namaCustomer || "";
+      });
 
     } catch (err) {
       console.error(err);
@@ -386,13 +393,13 @@ export default function CustomerCostPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, [selectedCustomer]);
+  }, []);
 
   useEffect(() => {
     fetchCustomerDataFromSupabase();
   }, [fetchCustomerDataFromSupabase]);
 
-  // Sinkronkan Transaksi & Dokumen Berdasarkan Customer Terpilih
+  // Sinkronkan Transaksi & Dokumen Berdasarkan Customer & Periode Terpilih
   useEffect(() => {
     if (!selectedCustomer || rawTransactions.length === 0) {
       setTransactionsList([]);
@@ -400,9 +407,16 @@ export default function CustomerCostPage() {
       return;
     }
 
-    const custTrx = rawTransactions.filter(
-      (t) => (t.customer_name || "").toLowerCase() === selectedCustomer.toLowerCase()
-    );
+    // Perbarui ID Customer yang ditampilkan
+    const foundCust = customersList.find((c) => c.namaCustomer === selectedCustomer);
+    if (foundCust) setSelectedCustomerId(foundCust.idCustomer);
+
+    // Filter transaksi untuk customer aktif (dengan toleransi filter periode jika dipilih)
+    const custTrx = rawTransactions.filter((t) => {
+      const matchName = (t.customer_name || "").toLowerCase() === selectedCustomer.toLowerCase();
+      const matchPeriod = periode === "Semua Periode" || t.period_month === periode;
+      return matchName && matchPeriod;
+    });
 
     const mappedTrx: CustomerTransaction[] = custTrx.map((t, idx) => {
       const actual = Number(t.actual_cost || 0);
@@ -414,6 +428,7 @@ export default function CustomerCostPage() {
       const rawCat = (t.cost_category || "").toUpperCase();
       if (rawCat.includes("TRUCK") || rawCat.includes("TRANSPORT")) cat = "Transportasi";
       else if (rawCat.includes("STORAGE") || rawCat.includes("WAREHOUSE") || rawCat.includes("GUDANG")) cat = "Gudang & Distribusi";
+      else if (rawCat.includes("HANDL")) cat = "Handling Terminal";
       else if (rawCat.includes("PROMO")) cat = "Promosi";
 
       return {
@@ -425,32 +440,34 @@ export default function CustomerCostPage() {
           year: "numeric",
         }),
         kategori: cat,
-        deskripsi: t.description || `Biaya pengiriman kargo ${t.job_number || "-"}`,
+        deskripsi: t.description || `Biaya operasional ${t.job_number || "-"}`,
         nominal: actual,
         status: isExc ? "Exception" : t.review_flag ? "Ditinjau" : "Valid",
+        hasEvidence: Boolean(t.has_evidence),
+        evidenceUrl: t.evidence_url || null,
       };
     });
 
     setTransactionsList(mappedTrx);
 
-    // Filter dokumen bukti transaksi
+    // Filter dokumen bukti transaksi nyata dari customer terpilih
     const docs: DokumenBukti[] = custTrx
-      .filter((t) => t.has_evidence || t.attachment_url)
+      .filter((t) => t.has_evidence || t.evidence_url)
       .map((t, idx) => ({
         id: `doc-${t.id || idx}`,
-        nama: t.attachment_name || `bukti_transaksi_${t.voucher_no || idx + 1}.pdf`,
+        nama: `kuitansi_${(t.voucher_no || t.job_number || `trx_${idx + 1}`).toLowerCase().replace(/[^a-z0-9_-]/g, "_")}.pdf`,
         tanggal: new Date(t.created_at || Date.now()).toLocaleDateString("id-ID", {
           day: "2-digit",
           month: "short",
           year: "numeric",
         }),
-        ukuran: "1.8 MB",
+        ukuran: "1.4 MB",
         tipe: "pdf",
-        url: t.attachment_url || `https://placehold.co/800x1100/png?text=Bukti+Transaksi+${encodeURIComponent(t.voucher_no || t.job_number || "Document")}`,
+        url: t.evidence_url || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
       }));
 
     setDocumentsList(docs);
-  }, [selectedCustomer, rawTransactions]);
+  }, [selectedCustomer, periode, rawTransactions, customersList]);
 
   // Dropdown Customer Options
   const customerDropdownOptions: DropdownOption[] = useMemo(() => {
@@ -460,43 +477,44 @@ export default function CustomerCostPage() {
     }));
   }, [customersList]);
 
-  // Kalkulasi KPI Customer Terpilih
+  // Kalkulasi 4 KPI Customer Terpilih
   const currentCustData = useMemo(() => {
-    const found = customersList.find((c) => c.namaCustomer === selectedCustomer);
-    const totalCost = found?.totalCost || 0;
-    const budget = found?.budget || 0;
-    const variance = found?.variance ?? (budget > 0 ? totalCost - budget : 0);
-    const variancePctNum = budget > 0 ? (variance / budget) * 100 : 0;
-    const realisasiNum = budget > 0 ? Math.round((totalCost / budget) * 100) : 0;
-
-    const excCount = found?.exceptionCount || 0;
+    const totalCost = transactionsList.reduce((sum, t) => sum + t.nominal, 0);
     const countTrx = transactionsList.length;
+    const excCount = transactionsList.filter((t) => t.status === "Exception").length;
+
+    // Hitung budget & variance customer terpilih
+    const found = customersList.find((c) => c.namaCustomer === selectedCustomer);
+    const budget = found?.budget || totalCost;
+    const variance = totalCost - budget;
+    const variancePctNum = budget > 0 ? (variance / budget) * 100 : 0;
+    const realisasiNum = budget > 0 ? Math.round((totalCost / budget) * 100) : 100;
 
     return {
       totalCostFormatted: formatJt(totalCost),
       budgetFormatted: budget > 0 ? formatJt(budget) : "Rp 0",
       varianceFormatted: variance >= 0 ? `+${formatJt(variance)}` : formatJt(variance),
       variancePct: `${variancePctNum >= 0 ? "+" : ""}${variancePctNum.toFixed(1).replace(".", ",")}%`,
-      realisasiText: budget > 0 ? `Realisasi ${realisasiNum}%` : "Belum diatur",
+      realisasiText: budget > 0 ? `Realisasi ${realisasiNum}%` : "Sesuai pagu",
       trxCountText: `${countTrx} transaksi`,
       exceptionCount: excCount,
-      exceptionText: excCount > 0 ? `${excCount} transaksi berisiko` : "Semua transaksi valid",
+      exceptionText: excCount > 0 ? `${excCount} transaksi anomali` : "Semua transaksi valid",
     };
   }, [customersList, selectedCustomer, transactionsList]);
 
-  // Kalkulasi Breakdown Kategori Biaya Dinamis
+  // Kalkulasi Breakdown Kategori Biaya Customer Terpilih
   const categoryBreakdown = useMemo(() => {
     const totals: Record<string, number> = {
       Transportasi: 0,
       "Gudang & Distribusi": 0,
-      Promosi: 0,
+      "Handling Terminal": 0,
       Operasional: 0,
-      Lainnya: 0,
+      Promosi: 0,
     };
 
     let grandTotal = 0;
     transactionsList.forEach((t) => {
-      const cat = totals[t.kategori] !== undefined ? t.kategori : "Lainnya";
+      const cat = totals[t.kategori] !== undefined ? t.kategori : "Operasional";
       totals[cat] += t.nominal;
       grandTotal += t.nominal;
     });
@@ -504,9 +522,9 @@ export default function CustomerCostPage() {
     return [
       { label: "Transportasi", color: "bg-[#0a7ebf]", amount: totals.Transportasi, pct: grandTotal > 0 ? Math.round((totals.Transportasi / grandTotal) * 100) : 0 },
       { label: "Gudang & Distribusi", color: "bg-[#d4194f]", amount: totals["Gudang & Distribusi"], pct: grandTotal > 0 ? Math.round((totals["Gudang & Distribusi"] / grandTotal) * 100) : 0 },
-      { label: "Promosi", color: "bg-[#7c3aed]", amount: totals.Promosi, pct: grandTotal > 0 ? Math.round((totals.Promosi / grandTotal) * 100) : 0 },
+      { label: "Handling Terminal", color: "bg-[#7c3aed]", amount: totals["Handling Terminal"], pct: grandTotal > 0 ? Math.round((totals["Handling Terminal"] / grandTotal) * 100) : 0 },
       { label: "Operasional", color: "bg-[#10b981]", amount: totals.Operasional, pct: grandTotal > 0 ? Math.round((totals.Operasional / grandTotal) * 100) : 0 },
-      { label: "Lainnya", color: "bg-[#d97706]", amount: totals.Lainnya, pct: grandTotal > 0 ? Math.round((totals.Lainnya / grandTotal) * 100) : 0 },
+      { label: "Promosi", color: "bg-[#d97706]", amount: totals.Promosi, pct: grandTotal > 0 ? Math.round((totals.Promosi / grandTotal) * 100) : 0 },
     ];
   }, [transactionsList]);
 
@@ -528,7 +546,7 @@ export default function CustomerCostPage() {
       });
     }
 
-    const highCost = rawTransactions.filter((r) => Number(r.actual_cost || 0) >= 50000000);
+    const highCost = rawTransactions.filter((r) => Number(r.actual_cost || 0) >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -564,11 +582,13 @@ export default function CustomerCostPage() {
   // Filter Tabel Customer
   const filteredCustomers = useMemo(() => {
     return customersList.filter((c) => {
-      const matchSearch = c.namaCustomer.toLowerCase().includes(searchCustomer.toLowerCase());
+      const matchSearch = c.namaCustomer.toLowerCase().includes(searchCustomer.toLowerCase()) ||
+        c.idCustomer.toLowerCase().includes(searchCustomer.toLowerCase());
       const matchStatus = filterCustomerStatus === "Semua Status" || c.status === filterCustomerStatus;
-      return matchSearch && matchStatus;
+      const matchSegmen = filterCustomerSegmen === "Semua Segmen" || c.segmen === filterCustomerSegmen;
+      return matchSearch && matchStatus && matchSegmen;
     });
-  }, [customersList, searchCustomer, filterCustomerStatus]);
+  }, [customersList, searchCustomer, filterCustomerStatus, filterCustomerSegmen]);
 
   // Filter Tabel Transaksi Terbaru
   const filteredRecentTransactions = useMemo(() => {
@@ -576,22 +596,28 @@ export default function CustomerCostPage() {
     return transactionsList.filter((t) => t.kategori === filterTrxCategory);
   }, [transactionsList, filterTrxCategory]);
 
-  // Unduh Detail CSV
+  const totalTrxPages = Math.max(1, Math.ceil(filteredRecentTransactions.length / trxPerPage));
+  const displayedRecentTransactions = useMemo(() => {
+    const start = (trxPage - 1) * trxPerPage;
+    return filteredRecentTransactions.slice(start, start + trxPerPage);
+  }, [filteredRecentTransactions, trxPage, trxPerPage]);
+
+  // Handler Unduh Detail CSV
   const handleDownloadDetail = () => {
     if (transactionsList.length === 0) return;
     const csvContent =
-      "data:text/csv;charset=utf-8," +
+      "data:text/csv;charset=utf-8,\uFEFF" +
       [
-        "id_transaksi,tanggal,kategori,deskripsi,nominal,status",
+        "id_transaksi,customer,tanggal,kategori,deskripsi,nominal,status",
         ...transactionsList.map(
-          (t) => `"${t.id}","${t.tanggal}","${t.kategori}","${t.deskripsi}",${t.nominal},"${t.status}"`
+          (t) => `"${t.id}","${selectedCustomer}","${t.tanggal}","${t.kategori}","${t.deskripsi.replace(/"/g, '""')}",${t.nominal},"${t.status}"`
         ),
       ].join("\n");
 
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Detail_Cost_${(selectedCustomer || "Customer").replace(/\s+/g, "_")}.csv`);
+    link.setAttribute("download", `Detail_Cost_${(selectedCustomer || "Customer").replace(/\s+/g, "_")}_${periode.replace(/\s+/g, "_")}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -603,8 +629,8 @@ export default function CustomerCostPage() {
       <Sidebar />
 
       {/* Konten Utama */}
-      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
-        {/* Header Dasbor */}
+      <main className="flex-1 lg:ml-[260px] min-w-0 px-8 py-6 overflow-y-auto">
+        {/* Header Modul */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
@@ -681,8 +707,7 @@ export default function CustomerCostPage() {
                 options={customerDropdownOptions}
                 onChange={(val) => {
                   setSelectedCustomer(val);
-                  const found = customersList.find((c) => c.namaCustomer === val);
-                  setSelectedCustomerId(found?.idCustomer || "—");
+                  setTrxPage(1);
                 }}
               />
             )}
@@ -696,7 +721,10 @@ export default function CustomerCostPage() {
                 label="Periode"
                 value={periode}
                 options={dynamicPeriodeOptions}
-                onChange={setPeriode}
+                onChange={(val) => {
+                  setPeriode(val);
+                  setTrxPage(1);
+                }}
               />
             )}
           </div>
@@ -717,7 +745,7 @@ export default function CustomerCostPage() {
           </div>
         </div>
 
-        {/* 4 Kartu KPI Makro (dengan Skeleton) */}
+        {/* 4 Kartu KPI Makro */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, idx) => (
@@ -818,12 +846,12 @@ export default function CustomerCostPage() {
           )}
         </div>
 
-        {/* Baris 2: Breakdown Kategori & Dokumen Bukti (dengan Skeleton) */}
+        {/* Baris 2: Breakdown Kategori & Dokumen Bukti */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
           {/* Breakdown Kategori Biaya */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-7">
             <h3 className="text-sm font-bold text-slate-900">Breakdown Kategori Biaya</h3>
-            <p className="text-[11px] text-slate-400">Proporsi total cost customer</p>
+            <p className="text-[11px] text-slate-400">Proporsi total cost customer ({selectedCustomer})</p>
 
             <div className="mt-5 space-y-3.5">
               {isLoading ? (
@@ -839,7 +867,7 @@ export default function CustomerCostPage() {
                   <div key={cat.label} className="flex items-center justify-between gap-4">
                     <span className="w-36 text-xs font-semibold text-slate-700">{cat.label}</span>
                     <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-                      <div className={`h-2 rounded-full ${cat.color}`} style={{ width: `${cat.pct}%` }} />
+                      <div className={`h-2 rounded-full ${cat.color} transition-all duration-300`} style={{ width: `${cat.pct}%` }} />
                     </div>
                     <span className="w-20 text-right text-xs font-bold text-slate-900">
                       {formatJt(cat.amount)}
@@ -856,12 +884,12 @@ export default function CustomerCostPage() {
               <div className="flex items-start justify-between">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Dokumen Bukti</h3>
-                  <p className="text-[11px] text-slate-400">{documentsList.length} dokumen pada periode ini</p>
+                  <p className="text-[11px] text-slate-400">{documentsList.length} dokumen pada transaksi ini</p>
                 </div>
                 <button
                   disabled={documentsList.length === 0}
                   onClick={() => setIsAllDocsModalOpen(true)}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
                 >
                   Lihat Semua
                 </button>
@@ -900,7 +928,7 @@ export default function CustomerCostPage() {
                           <FileText className="h-4 w-4" />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-slate-800">{doc.nama}</p>
+                          <p className="text-xs font-bold text-slate-800 truncate max-w-[190px]">{doc.nama}</p>
                           <p className="text-[11px] text-slate-400">
                             {doc.tanggal} · {doc.ukuran}
                           </p>
@@ -909,7 +937,7 @@ export default function CustomerCostPage() {
                       <button
                         onClick={() => setPreviewDoc(doc)}
                         title="Lihat Bukti"
-                        className="p-1.5 text-sky-600 hover:text-sky-800 transition"
+                        className="p-1.5 text-sky-600 hover:text-sky-800 transition cursor-pointer"
                       >
                         <Eye className="h-4 w-4" />
                       </button>
@@ -927,7 +955,7 @@ export default function CustomerCostPage() {
             <div>
               <h3 className="text-sm font-bold text-slate-900">Daftar Customer</h3>
               <p className="text-[11px] text-slate-400">
-                Data customer disinkronkan langsung dari Supabase
+                Pilih customer untuk melihat detail breakdown di atas
               </p>
             </div>
 
@@ -936,13 +964,13 @@ export default function CustomerCostPage() {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-700" />
                 <input
                   type="text"
-                  placeholder="Cari customer..."
+                  placeholder="Cari customer atau ID..."
                   value={searchCustomer}
                   onChange={(e) => {
                     setSearchCustomer(e.target.value);
                     setCustomerPage(1);
                   }}
-                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-600 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
+                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-500 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
                 />
               </div>
 
@@ -961,7 +989,10 @@ export default function CustomerCostPage() {
 
               <select
                 value={filterCustomerSegmen}
-                onChange={(e) => setFilterCustomerSegmen(e.target.value)}
+                onChange={(e) => {
+                  setFilterCustomerSegmen(e.target.value);
+                  setCustomerPage(1);
+                }}
                 className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0a7ebf]"
               >
                 <option value="Semua Segmen">Semua Segmen</option>
@@ -1012,15 +1043,16 @@ export default function CustomerCostPage() {
                       onClick={() => {
                         setSelectedCustomer(row.namaCustomer);
                         setSelectedCustomerId(row.idCustomer);
+                        setTrxPage(1);
                       }}
                       className={`cursor-pointer transition hover:bg-slate-50/70 ${
-                        selectedCustomer === row.namaCustomer ? "bg-sky-50/40" : ""
+                        selectedCustomer === row.namaCustomer ? "bg-sky-50/60 font-semibold" : ""
                       }`}
                     >
-                      <td className="py-3.5 px-3 font-bold text-[#0a7ebf]">
+                      <td className="py-3.5 px-3 font-mono font-bold text-[#0a7ebf]">
                         {row.idCustomer}
                       </td>
-                      <td className="py-3.5 px-3 font-bold text-slate-800">
+                      <td className="py-3.5 px-3 font-bold text-slate-900">
                         {row.namaCustomer}
                       </td>
                       <td className="py-3.5 px-3 text-slate-400">
@@ -1060,14 +1092,14 @@ export default function CustomerCostPage() {
               {Math.min(customerPage * 4, filteredCustomers.length)} dari {filteredCustomers.length} customer
             </p>
 
-            <div className="flex items-center rounded-full border border-slate-300 px-3 py-1 gap-3">
+            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
               {Array.from({ length: Math.max(1, Math.ceil(filteredCustomers.length / 4)) }, (_, i) => i + 1).map((num) => (
                 <button
                   key={num}
                   onClick={() => setCustomerPage(num)}
                   className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
                     customerPage === num
-                      ? "bg-[#0a7ebf] text-white"
+                      ? "bg-[#0a7ebf] text-white font-bold"
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
@@ -1078,7 +1110,7 @@ export default function CustomerCostPage() {
           </div>
         </div>
 
-        {/* Baris 4: Tabel Transaksi Terbaru */}
+        {/* Baris 4: Tabel Transaksi Terbaru (Tepat 6 Baris per Halaman) */}
         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
@@ -1099,8 +1131,9 @@ export default function CustomerCostPage() {
               <option value="Semua Kategori">Semua Kategori</option>
               <option value="Transportasi">Transportasi</option>
               <option value="Gudang & Distribusi">Gudang & Distribusi</option>
-              <option value="Promosi">Promosi</option>
+              <option value="Handling Terminal">Handling Terminal</option>
               <option value="Operasional">Operasional</option>
+              <option value="Promosi">Promosi</option>
             </select>
           </div>
 
@@ -1118,7 +1151,7 @@ export default function CustomerCostPage() {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {isLoading ? (
-                  Array.from({ length: 5 }).map((_, idx) => (
+                  Array.from({ length: 6 }).map((_, idx) => (
                     <tr key={idx} className="animate-pulse">
                       <td className="py-3.5 px-3"><div className="h-3.5 w-24 rounded bg-slate-200" /></td>
                       <td className="py-3.5 px-3"><div className="h-3.5 w-20 rounded bg-slate-200" /></td>
@@ -1128,14 +1161,14 @@ export default function CustomerCostPage() {
                       <td className="py-3.5 px-3"><div className="mx-auto h-4 w-16 rounded-full bg-slate-200" /></td>
                     </tr>
                   ))
-                ) : filteredRecentTransactions.length === 0 ? (
+                ) : displayedRecentTransactions.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-10 text-center text-xs text-slate-400">
                       Tidak ada transaksi ditemukan untuk customer ini.
                     </td>
                   </tr>
                 ) : (
-                  filteredRecentTransactions.slice((trxPage - 1) * 5, trxPage * 5).map((row, idx) => (
+                  displayedRecentTransactions.map((row, idx) => (
                     <tr 
                       key={row.dbId || `${row.id}-${idx}`} 
                       className="hover:bg-slate-50/60 transition"
@@ -1152,7 +1185,7 @@ export default function CustomerCostPage() {
                       <td className="py-3.5 px-3 font-medium text-slate-800">
                         {row.deskripsi}
                       </td>
-                      <td className="py-3.5 px-3 font-medium text-slate-900">
+                      <td className="py-3.5 px-3 font-bold text-slate-900">
                         {formatRupiah(row.nominal)}
                       </td>
                       <td className="py-3.5 px-3 text-center">
@@ -1175,25 +1208,36 @@ export default function CustomerCostPage() {
             </table>
           </div>
 
+          {/* Footer Paginasi Transaksi: 6 Baris per Halaman */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             <p className="text-xs text-slate-400">
-              Total {filteredRecentTransactions.length} transaksi
+              Menampilkan {filteredRecentTransactions.length > 0 ? (trxPage - 1) * trxPerPage + 1 : 0}–
+              {Math.min(trxPage * trxPerPage, filteredRecentTransactions.length)} dari {filteredRecentTransactions.length} transaksi
             </p>
 
-            <div className="flex items-center rounded-full border border-slate-300 px-3 py-1 gap-3">
-              {Array.from({ length: Math.max(1, Math.ceil(filteredRecentTransactions.length / 5)) }, (_, i) => i + 1).map((num) => (
+            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
+              {Array.from({ length: totalTrxPages }, (_, i) => i + 1).map((num) => (
                 <button
                   key={num}
                   onClick={() => setTrxPage(num)}
                   className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
                     trxPage === num
-                      ? "bg-[#0a7ebf] text-white"
+                      ? "bg-[#0a7ebf] text-white font-bold"
                       : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
                   {num}
                 </button>
               ))}
+
+              <button
+                disabled={trxPage >= totalTrxPages}
+                onClick={() => setTrxPage((p) => Math.min(p + 1, totalTrxPages))}
+                className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
+                title="Halaman Berikutnya"
+              >
+                <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+              </button>
             </div>
           </div>
         </div>
@@ -1221,15 +1265,23 @@ export default function CustomerCostPage() {
               </div>
 
               <div className="flex flex-1 items-center justify-center bg-slate-100/70 p-6 overflow-auto">
-                <img
-                  src={previewDoc.url}
-                  alt={previewDoc.nama}
-                  className="max-h-full max-w-full rounded-lg border border-slate-200 bg-white object-contain shadow"
-                />
+                {previewDoc.url.endsWith(".pdf") ? (
+                  <iframe
+                    src={previewDoc.url}
+                    title={previewDoc.nama}
+                    className="h-full w-full rounded-lg border border-slate-200 bg-white shadow"
+                  />
+                ) : (
+                  <img
+                    src={previewDoc.url}
+                    alt={previewDoc.nama}
+                    className="max-h-full max-w-full rounded-lg border border-slate-200 bg-white object-contain shadow"
+                  />
+                )}
               </div>
 
               <div className="flex items-center justify-between border-t border-slate-100 bg-white px-6 py-3 text-xs">
-                <span className="text-slate-400">Lampiran Dokumen Transaksi</span>
+                <span className="text-slate-400">Lampiran Dokumen Transaksi Sah</span>
                 <div className="flex items-center gap-2">
                   <a
                     href={previewDoc.url}
@@ -1292,7 +1344,7 @@ export default function CustomerCostPage() {
                         setIsAllDocsModalOpen(false);
                         setPreviewDoc(d);
                       }}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-sky-600 hover:bg-sky-50 shadow-sm"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-sky-600 hover:bg-sky-50 shadow-sm cursor-pointer"
                     >
                       Buka Bukti
                     </button>
@@ -1303,7 +1355,7 @@ export default function CustomerCostPage() {
               <div className="flex justify-end border-t border-slate-100 p-3.5 bg-slate-50">
                 <button
                   onClick={() => setIsAllDocsModalOpen(false)}
-                  className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100"
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
                 >
                   Tutup
                 </button>
