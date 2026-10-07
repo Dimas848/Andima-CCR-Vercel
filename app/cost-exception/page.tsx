@@ -1,846 +1,1000 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   Bell,
   CalendarDays,
-  Settings,
   AlertTriangle,
   TrendingUp,
   Flame,
-  Info,
+  ShieldAlert,
   Search,
-  ChevronLeft,
   ChevronRight,
   X,
-  CheckCircle2,
   Sliders,
-  ShieldCheck,
-  Loader2,
-  RefreshCw,
+  SlidersHorizontal,
+  AlertCircle,
+  ArrowRight,
+  FileText,
+  CheckCircle2,
 } from "lucide-react";
 
-import Sidebar from "../dashboard/Sidebar";
-import CustomButton from "../dashboard/CustomButton";
-import StatusBadge, { type Tone } from "../dashboard/StatusBadge";
+import Sidebar from "@/components/sidebar";
 import { supabase } from "@/lib/supabase";
 
-// Tipe Data Sesuai Model Data TR-2909-003 & Skema Supabase c2_cost_transactions
-export type AnomalyTag = "OVER_BUDGET" | "MISSING_EVIDENCE" | "JOB_NOT_FOUND" | "HIGH_COST";
+export type AnomalyTag = "Over Budget" | "High Cost" | "Missing Evidence" | "Duplicate Data";
 export type ExceptionPriority = "Critical" | "High" | "Medium" | "Low";
-export type ExceptionStatus = "Terbuka" | "Ditinjau" | "Selesai";
+export type ExceptionStatus = "Terbuka" | "Ditinjau" | "Dalam Proses" | "Selesai";
 
 export interface ExceptionItem {
   id: string;
   dbId: string;
-  transactionId: string;
-  jobNumber: string;
   customer: string;
-  branch: string;
-  budgetAmount: number;
-  actualAmount: number;
-  varianceAmount: number;
-  tags: AnomalyTag[];
-  priority: ExceptionPriority;
+  jobNumber?: string;
+  nominal: number;
+  tipeMasalah: AnomalyTag;
+  prioritas: ExceptionPriority;
   status: ExceptionStatus;
-  createdAt: string;
-  slaExceeded: boolean;
-  resolutionNotes?: string;
-  resolvedBy?: string;
+  slaExceeded?: boolean;
 }
 
-// Fallback Data Riil PT Andima jika database belum terhubung
-const fallbackExceptions: ExceptionItem[] = [
-  {
-    id: "EXC-001",
-    dbId: "mock-1",
-    transactionId: "2606-006",
-    jobNumber: "BI/2608/3801",
-    customer: "PT CEVA AIR OCEAN INDONESIA",
-    branch: "Surabaya",
-    budgetAmount: 77050,
-    actualAmount: 95000,
-    varianceAmount: 17950,
-    tags: ["OVER_BUDGET", "MISSING_EVIDENCE"],
-    priority: "High",
-    status: "Terbuka",
-    createdAt: "2026-09-30 08:30",
-    slaExceeded: true,
-  },
-  {
-    id: "EXC-002",
-    dbId: "mock-2",
-    transactionId: "BR26-06015",
-    jobNumber: "DSVIMP/2608/2818",
-    customer: "PT DSV TRANSPORT INDONESIA",
-    branch: "Jakarta Pusat",
-    budgetAmount: 50000,
-    actualAmount: 180930,
-    varianceAmount: 130930,
-    tags: ["OVER_BUDGET"],
-    priority: "Medium",
-    status: "Terbuka",
-    createdAt: "2026-09-30 11:15",
-    slaExceeded: false,
-  },
-  {
-    id: "EXC-003",
-    dbId: "mock-3",
-    transactionId: "2606-018",
-    jobNumber: "JOB-UNKNOWN-001",
-    customer: "PT CEVA AIR OCEAN INDONESIA",
-    branch: "Jakarta Pusat",
-    budgetAmount: 0,
-    actualAmount: 500000,
-    varianceAmount: 500000,
-    tags: ["JOB_NOT_FOUND", "MISSING_EVIDENCE"],
-    priority: "Critical",
-    status: "Terbuka",
-    createdAt: "2026-09-29 09:00",
-    slaExceeded: true,
-  },
-  {
-    id: "EXC-004",
-    dbId: "mock-4",
-    transactionId: "2606-018",
-    jobNumber: "BI/2608/3782",
-    customer: "PT CEVA AIR OCEAN INDONESIA",
-    branch: "Jakarta Pusat",
-    budgetAmount: 50242525,
-    actualAmount: 52000000,
-    varianceAmount: 1757475,
-    tags: ["OVER_BUDGET", "HIGH_COST", "MISSING_EVIDENCE"],
-    priority: "Critical",
-    status: "Ditinjau",
-    createdAt: "2026-09-28 14:20",
-    slaExceeded: true,
-    resolutionNotes: "Menunggu lampiran invoice fisik dari gudang Garuda",
-    resolvedBy: "Kak Dian (Tax Manager)",
-  },
+const MONTH_NAMES_ID = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
 ];
 
-function formatRupiah(value: number): string {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(value);
+function getDynamicPeriod(): string {
+  const d = new Date();
+  return `${MONTH_NAMES_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+function formatRupiah(value: number): string {
+  return `Rp ${value.toLocaleString("id-ID")}`;
+}
+
+function formatCompactRupiah(val: number): string {
+  if (Math.abs(val) >= 1_000_000_000) {
+    return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} M`;
+  }
+  if (Math.abs(val) >= 1_000_000) {
+    return `Rp ${(val / 1_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} jt`;
+  }
+  return `Rp ${val.toLocaleString("id-ID")}`;
+}
+
+// =========================================================================
+// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// =========================================================================
+interface NotificationPopoverProps {
+  isOpen: boolean;
+  onClose: () => void;
+  periode: string;
+  totalExceptionCount: number;
+  isLoading: boolean;
+  categorySummaries: {
+    tag: AnomalyTag;
+    count: number;
+    nominal: number;
+    description: string;
+    subNote: string;
+    icon: typeof TrendingUp;
+    bgColor: string;
+    textColor: string;
+    badgeBg: string;
+  }[];
+}
+
+function NotificationPopover({
+  isOpen,
+  onClose,
+  periode,
+  totalExceptionCount,
+  isLoading,
+  categorySummaries,
+}: NotificationPopoverProps) {
+  const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
+  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/5" onClick={onClose} />
+      <div className="absolute right-0 top-11 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl animate-in fade-in slide-in-from-top-2 text-left">
+        <div className="p-5 pb-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
+              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+            </div>
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {isLoading ? (
+            <div className="mt-2 space-y-1.5 animate-pulse">
+              <div className="h-3.5 w-40 rounded bg-slate-200" />
+              <div className="h-2.5 w-28 rounded bg-slate-100" />
+            </div>
+          ) : (
+            <>
+              <p className="mt-2 text-xs font-bold text-slate-800">
+                {totalExceptionCount} exception perlu tindak lanjut
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Ringkasan exception · {periode}
+              </p>
+            </>
+          )}
+
+          <button
+            onClick={() => setIsMarkedAllRead(true)}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+          >
+            Tandai semua dibaca
+          </button>
+
+          <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
+            <button
+              onClick={() => setActiveTab("semua")}
+              className={`pb-2 text-xs font-bold transition ${
+                activeTab === "semua"
+                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Semua
+            </button>
+            <button
+              onClick={() => setActiveTab("belum_dibaca")}
+              className={`pb-2 text-xs font-medium transition ${
+                activeTab === "belum_dibaca"
+                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Belum dibaca
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
+          {isLoading ? (
+            <div className="space-y-4 p-5">
+              {[1, 2, 3].map((idx) => (
+                <div key={idx} className="flex gap-3 animate-pulse">
+                  <div className="h-9 w-9 rounded-xl bg-slate-200 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="flex justify-between">
+                      <div className="h-3.5 w-24 rounded bg-slate-200" />
+                      <div className="h-3.5 w-12 rounded bg-slate-200" />
+                    </div>
+                    <div className="h-4 w-20 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+            <div className="py-10 text-center text-xs text-slate-400">
+              Semua notifikasi telah ditandai dibaca.
+            </div>
+          ) : categorySummaries.length === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-400">
+              Tidak ada anomali biaya saat ini.
+            </div>
+          ) : (
+            categorySummaries.map((cat) => {
+              const IconComp = cat.icon;
+              return (
+                <div key={cat.tag} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgColor} ${cat.textColor}`}>
+                    <IconComp className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-slate-900">{cat.tag}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cat.badgeBg} ${cat.textColor}`}>
+                        {cat.count} item
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{formatCompactRupiah(cat.nominal)}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                      {cat.description}
+                    </p>
+                    <span className={`mt-2 block text-[11px] font-bold ${cat.textColor}`}>
+                      {cat.subNote}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+          >
+            <span>Tutup notifikasi</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// =========================================================================
+// KOMPONEN UTAMA: COST EXCEPTION & ALERT
+// =========================================================================
 export default function CostExceptionPage() {
+  const router = useRouter();
+  const currentLivePeriod = useMemo(() => getDynamicPeriod(), []);
+
+  // State Dinamis
   const [data, setData] = useState<ExceptionItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   // Filter States
   const [search, setSearch] = useState("");
-  const [selectedTag, setSelectedTag] = useState<string>("ALL");
-  const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
-  const [selectedBranch, setSelectedBranch] = useState<string>("ALL");
+  const [selectedTag, setSelectedTag] = useState<string>("Semua Tipe");
+  const [selectedStatus, setSelectedStatus] = useState<string>("Semua Status");
 
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
-
-  // Modal Review & Resolution (TR-2909-003)
-  const [activeItem, setActiveItem] = useState<ExceptionItem | null>(null);
-  const [inputResolutionNotes, setInputResolutionNotes] = useState("");
-  const [isSubmittingResolution, setIsSubmittingResolution] = useState(false);
-
-  // Modal Settings Rule Alert
+  // State Popover & Modal
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [ruleBudgetVariance, setRuleBudgetVariance] = useState("5");
   const [ruleHighCostLimit, setRuleHighCostLimit] = useState("50000000");
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3500);
-  };
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 6;
 
-  // 1. Tarik Data Transaksi Bermasalah Langsung dari Supabase
-  const fetchExceptionsFromSupabase = async () => {
+  // Tarik Data Live dari Supabase
+  const fetchExceptionsFromSupabase = useCallback(async () => {
     try {
-      setIsLoading(true);
+      setIsSyncing(true);
       const { data: records, error } = await supabase
         .from("c2_cost_transactions")
         .select("*")
         .order("created_at", { ascending: false });
 
       if (error || !records || records.length === 0) {
-        console.warn("Memuat data exception lokal (fallback)...");
-        setData(fallbackExceptions);
+        setData([]);
         return;
       }
 
-      // Transformasi baris c2_cost_transactions menjadi ExceptionItem
-      const formatted: ExceptionItem[] = records
-        .filter((item) => item.review_flag || item.reconciliation_result !== "MATCH" || !item.has_evidence)
-        .map((item, idx) => {
-          const tags: AnomalyTag[] = [];
-          const variance = Number(item.variance || (item.actual_cost - item.planned_cost) || 0);
-          const actual = Number(item.actual_cost || 0);
-          const planned = Number(item.planned_cost || 0);
+      const anomalyRecords = records.filter(
+        (item) => item.review_flag || item.variance > 0 || !item.has_evidence || !item.is_job_matched
+      );
 
-          if (item.job_number === "UNMATCHED" || item.reconciliation_result === "JOB_NOT_FOUND" || planned === 0) {
-            tags.push("JOB_NOT_FOUND");
-          }
-          if (variance > 0) {
-            tags.push("OVER_BUDGET");
-          }
-          if (!item.has_evidence && actual > 0) {
-            tags.push("MISSING_EVIDENCE");
-          }
-          if (actual >= Number(ruleHighCostLimit)) {
-            tags.push("HIGH_COST");
-          }
+      if (anomalyRecords.length === 0) {
+        setData([]);
+        return;
+      }
 
-          // Klasifikasi Tingkat Keparahan (Priority)
-          let priority: ExceptionPriority = "Low";
-          if (tags.includes("JOB_NOT_FOUND") || actual >= 50000000) {
-            priority = "Critical";
-          } else if (tags.includes("OVER_BUDGET") || variance > 500000) {
-            priority = "High";
-          } else if (tags.includes("MISSING_EVIDENCE")) {
-            priority = "Medium";
-          }
+      const formatted: ExceptionItem[] = anomalyRecords.map((item, idx) => {
+        let tag: AnomalyTag = "Over Budget";
+        let prio: ExceptionPriority = "High";
+        const actual = Number(item.actual_cost || 0);
+        const variance = Number(item.variance || 0);
 
-          const createdDate = new Date(item.created_at || Date.now());
-          const isOlderThan24h = Date.now() - createdDate.getTime() > 24 * 60 * 60 * 1000;
+        if (!item.has_evidence) {
+          tag = "Missing Evidence";
+          prio = "High";
+        } else if (actual >= Number(ruleHighCostLimit)) {
+          tag = "High Cost";
+          prio = "Critical";
+        } else if (!item.is_job_matched || item.job_number === "UNMATCHED") {
+          tag = "Duplicate Data";
+          prio = "Medium";
+        } else if (variance > 0) {
+          tag = "Over Budget";
+          prio = variance > 10000000 ? "Critical" : "High";
+        }
 
-          return {
-            id: `EXC-${String(idx + 1).padStart(3, "0")}`,
-            dbId: item.id,
-            transactionId: item.voucher_no || `TRX-${String(idx + 1).padStart(4, "0")}`,
-            jobNumber: item.job_number,
-            customer: item.customer_name || "PT Unknown Customer",
-            branch: item.branch_code || "Jakarta Pusat",
-            budgetAmount: planned,
-            actualAmount: actual,
-            varianceAmount: variance,
-            tags: tags.length > 0 ? tags : ["OVER_BUDGET"],
-            priority,
-            status: item.review_flag ? "Terbuka" : "Selesai",
-            createdAt: createdDate.toLocaleDateString("id-ID", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            slaExceeded: isOlderThan24h && item.review_flag,
-            resolutionNotes: item.description,
-          };
-        });
+        const stat: ExceptionStatus = item.review_flag ? "Terbuka" : (item.status as ExceptionStatus) || "Ditinjau";
 
-      setData(formatted.length > 0 ? formatted : fallbackExceptions);
+        const createdTime = new Date(item.created_at || Date.now()).getTime();
+        const isSlaExceeded = (Date.now() - createdTime > 24 * 60 * 60 * 1000) && stat !== "Selesai";
+
+        const generatedId = item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`;
+
+        return {
+          id: item.code || generatedId,
+          dbId: item.id || `db-${idx}`,
+          customer: item.customer_name || "Tanpa Nama Customer",
+          jobNumber: item.job_number || "-",
+          nominal: actual,
+          tipeMasalah: tag,
+          prioritas: prio,
+          status: stat,
+          slaExceeded: isSlaExceeded,
+        };
+      });
+
+      setData(formatted);
     } catch (err) {
-      console.error("Gagal sinkronisasi Supabase:", err);
-      setData(fallbackExceptions);
+      console.error(err);
+      setData([]);
     } finally {
+      setIsSyncing(false);
       setIsLoading(false);
     }
-  };
+  }, [ruleHighCostLimit]);
 
   useEffect(() => {
     fetchExceptionsFromSupabase();
-  }, [ruleHighCostLimit]);
+  }, [fetchExceptionsFromSupabase]);
 
-  // 2. Filter Dinamis
+  // Kalkulasi Metrik Dinamis
+  const metrics = useMemo(() => {
+    const total = data.length;
+    const overBudgetItems = data.filter((d) => d.tipeMasalah === "Over Budget");
+    const highCostItems = data.filter((d) => d.tipeMasalah === "High Cost");
+    const missingEvidenceItems = data.filter((d) => d.tipeMasalah === "Missing Evidence");
+    const duplicateItems = data.filter((d) => d.tipeMasalah === "Duplicate Data");
+    const dataQualityItems = [...missingEvidenceItems, ...duplicateItems];
+
+    const overBudgetNominal = overBudgetItems.reduce((acc, curr) => acc + curr.nominal, 0);
+
+    const slaItems = data.filter((d) => d.slaExceeded && d.status !== "Selesai");
+    const slaNominal = slaItems.reduce((acc, curr) => acc + curr.nominal, 0);
+
+    const criticalCount = data.filter((d) => d.prioritas === "Critical").length;
+    const highCount = data.filter((d) => d.prioritas === "High").length;
+    const mediumCount = data.filter((d) => d.prioritas === "Medium").length;
+    const lowCount = data.filter((d) => d.prioritas === "Low").length;
+
+    return {
+      total,
+      overBudgetCount: overBudgetItems.length,
+      overBudgetNominal,
+      highCostCount: highCostItems.length,
+      dataQualityCount: dataQualityItems.length,
+      missingEvidenceCount: missingEvidenceItems.length,
+      duplicateCount: duplicateItems.length,
+      criticalSlaCount: slaItems.length,
+      slaNominal,
+      criticalCount,
+      highCount,
+      mediumCount,
+      lowCount,
+    };
+  }, [data]);
+
+  // Ringkasan Kategori Dinamis
+  const categorySummaries = useMemo(() => {
+    const categories: {
+      tag: AnomalyTag;
+      count: number;
+      nominal: number;
+      description: string;
+      subNote: string;
+      icon: typeof TrendingUp;
+      bgColor: string;
+      textColor: string;
+      badgeBg: string;
+    }[] = [];
+
+    const overBudget = data.filter((d) => d.tipeMasalah === "Over Budget");
+    if (overBudget.length > 0) {
+      categories.push({
+        tag: "Over Budget",
+        count: overBudget.length,
+        nominal: overBudget.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.",
+        subNote: "Prioritas review anggaran",
+        icon: TrendingUp,
+        bgColor: "bg-rose-50",
+        textColor: "text-[#e11d48]",
+        badgeBg: "bg-rose-50",
+      });
+    }
+
+    const highCost = data.filter((d) => d.tipeMasalah === "High Cost");
+    if (highCost.length > 0) {
+      categories.push({
+        tag: "High Cost",
+        count: highCost.length,
+        nominal: highCost.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
+        subNote: "Perlu peninjauan biaya",
+        icon: AlertCircle,
+        bgColor: "bg-rose-50",
+        textColor: "text-[#e11d48]",
+        badgeBg: "bg-rose-50",
+      });
+    }
+
+    const missingEvidence = data.filter((d) => d.tipeMasalah === "Missing Evidence");
+    if (missingEvidence.length > 0) {
+      categories.push({
+        tag: "Missing Evidence",
+        count: missingEvidence.length,
+        nominal: missingEvidence.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.",
+        subNote: "Perlu kelengkapan dokumen",
+        icon: FileText,
+        bgColor: "bg-amber-50",
+        textColor: "text-amber-600",
+        badgeBg: "bg-amber-50",
+      });
+    }
+
+    const duplicate = data.filter((d) => d.tipeMasalah === "Duplicate Data");
+    if (duplicate.length > 0) {
+      categories.push({
+        tag: "Duplicate Data",
+        count: duplicate.length,
+        nominal: duplicate.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Nomor job atau data transaksi berpotensi duplikat atau belum terdaftar.",
+        subNote: "Perlu verifikasi data",
+        icon: ShieldAlert,
+        bgColor: "bg-purple-50",
+        textColor: "text-purple-600",
+        badgeBg: "bg-purple-50",
+      });
+    }
+
+    return categories;
+  }, [data]);
+
+  // Filter Dinamis
   const filteredData = useMemo(() => {
     return data.filter((item) => {
       const matchSearch =
         item.customer.toLowerCase().includes(search.toLowerCase()) ||
-        item.id.toLowerCase().includes(search.toLowerCase()) ||
-        item.jobNumber.toLowerCase().includes(search.toLowerCase());
+        item.id.toLowerCase().includes(search.toLowerCase());
 
-      const matchTag = selectedTag === "ALL" || item.tags.includes(selectedTag as AnomalyTag);
-      const matchStatus = selectedStatus === "ALL" || item.status === selectedStatus;
-      const matchBranch = selectedBranch === "ALL" || item.branch.includes(selectedBranch);
+      const matchTag = selectedTag === "Semua Tipe" || item.tipeMasalah === selectedTag;
+      const matchStatus = selectedStatus === "Semua Status" || item.status === selectedStatus;
 
-      return matchSearch && matchTag && matchStatus && matchBranch;
+      return matchSearch && matchTag && matchStatus;
     });
-  }, [data, search, selectedTag, selectedStatus, selectedBranch]);
+  }, [data, search, selectedTag, selectedStatus]);
 
-  // Pagination
-  const totalPages = Math.ceil(filteredData.length / itemsPerPage) || 1;
+  // Pagination Dinamis
+  const totalItems = filteredData.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage]);
 
-  // 3. Kalkulasi Kartu KPI Makro secara Real-Time
-  const metrics = useMemo(() => {
-    const unresolved = data.filter((d) => d.status !== "Selesai");
-    const overBudgetItems = unresolved.filter((d) => d.tags.includes("OVER_BUDGET"));
-    const highCostItems = unresolved.filter((d) => d.tags.includes("HIGH_COST"));
-    const dataQualityItems = unresolved.filter(
-      (d) => d.tags.includes("MISSING_EVIDENCE") || d.tags.includes("JOB_NOT_FOUND")
-    );
-    const criticalSlaItems = unresolved.filter((d) => d.slaExceeded);
+  const getTagPillClass = (tag: AnomalyTag) => {
+    switch (tag) {
+      case "Over Budget":
+        return "bg-[#ffe4e6] text-[#e11d48]";
+      case "High Cost":
+        return "bg-[#fce7f3] text-[#db2777]";
+      case "Missing Evidence":
+        return "bg-[#fef3c7] text-[#d97706]";
+      case "Duplicate Data":
+        return "bg-[#ede9fe] text-[#7c3aed]";
+      default:
+        return "bg-slate-100 text-slate-600";
+    }
+  };
 
-    const totalOverBudgetNominal = overBudgetItems.reduce((acc, curr) => acc + curr.actualAmount, 0);
-    const totalSlaNominal = criticalSlaItems.reduce((acc, curr) => acc + curr.actualAmount, 0);
+  const getPriorityPillClass = (prio: ExceptionPriority) => {
+    switch (prio) {
+      case "Critical":
+        return "bg-[#ffe4e6] text-[#e11d48]";
+      case "High":
+        return "bg-[#fce7f3] text-[#e11d48]";
+      case "Medium":
+        return "bg-[#fef3c7] text-[#d97706]";
+      case "Low":
+        return "bg-[#f1f5f9] text-[#64748b]";
+    }
+  };
 
-    const distribution = {
-      critical: unresolved.filter((d) => d.priority === "Critical").length,
-      high: unresolved.filter((d) => d.priority === "High").length,
-      medium: unresolved.filter((d) => d.priority === "Medium").length,
-      low: unresolved.filter((d) => d.priority === "Low").length,
-    };
-
-    return {
-      total: unresolved.length,
-      overBudgetCount: overBudgetItems.length,
-      overBudgetNominal: totalOverBudgetNominal,
-      highCostCount: highCostItems.length,
-      dataQualityCount: dataQualityItems.length,
-      criticalSlaCount: criticalSlaItems.length,
-      slaNominal: totalSlaNominal,
-      distribution,
-    };
-  }, [data]);
-
-  // 4. Aksi Resolusi Nyata ke Basis Data Supabase
-  const handleResolveException = async (newStatus: ExceptionStatus) => {
-    if (!activeItem) return;
-
-    try {
-      setIsSubmittingResolution(true);
-      const isResolved = newStatus === "Selesai";
-
-      // Simpan perubahan ke tabel Supabase c2_cost_transactions
-      if (activeItem.dbId && !activeItem.dbId.startsWith("mock-")) {
-        const { error } = await supabase
-          .from("c2_cost_transactions")
-          .update({
-            review_flag: !isResolved,
-            description: inputResolutionNotes || `Diverifikasi oleh Kak Dian (${newStatus})`,
-          })
-          .eq("id", activeItem.dbId);
-
-        if (error) throw error;
-      }
-
-      // Perbarui status state lokal
-      setData((prev) =>
-        prev.map((item) =>
-          item.id === activeItem.id
-            ? {
-                ...item,
-                status: newStatus,
-                resolutionNotes: inputResolutionNotes || item.resolutionNotes,
-                resolvedBy: "Kak Dian (Tax Manager / Cost Controller)",
-              }
-            : item
-        )
-      );
-
-      showToast(`Status anomali ${activeItem.id} berhasil diubah menjadi "${newStatus}".`);
-      setActiveItem(null);
-      setInputResolutionNotes("");
-    } catch (err: any) {
-      console.error("Gagal memperbarui status ke database:", err);
-      showToast(`Gagal menyimpan ke database: ${err.message}`);
-    } finally {
-      setIsSubmittingResolution(false);
+  const getStatusPillClass = (status: ExceptionStatus) => {
+    switch (status) {
+      case "Terbuka":
+        return "bg-[#e0f2fe] text-[#0284c7]";
+      case "Ditinjau":
+        return "bg-[#fef3c7] text-[#d97706]";
+      case "Dalam Proses":
+        return "bg-[#ede9fe] text-[#7c3aed]";
+      case "Selesai":
+        return "bg-[#dcfce7] text-[#16a34a]";
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f4f7fb]">
+    <div className="flex min-h-screen bg-[#f4f7fc]">
+      {/* Sidebar Navigasi */}
       <Sidebar />
 
-      <main className="flex-1 px-8 py-6">
+      {/* Konten Utama: Ditambahkan ml-64 dan min-w-0 agar tidak tertimpa sidebar */}
+      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
         {/* Header Modul */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Cost Exception & Alert</h1>
-            <p className="text-xs text-slate-500">
-              Deteksi otomatis anomali, klasifikasi rule engine, dan manajemen resolusi (FR-CCR2-003)
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              Cost Exception & Alert
+            </h1>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Deteksi otomatis anomali dan kelengkapan data biaya
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <CustomButton variant="outline" onClick={fetchExceptionsFromSupabase}>
-              <RefreshCw className="h-4 w-4" /> Sinkronkan Ulang
-            </CustomButton>
-            <CustomButton variant="outline" onClick={() => setIsRuleModalOpen(true)}>
-              <Settings className="h-4 w-4" /> Atur Rule Alert
-            </CustomButton>
 
+          <div className="flex items-center gap-2.5">
+            {/* Tombol Sinkronkan Supabase */}
             <button
-              aria-label="Notifikasi"
-              className="relative flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
+              onClick={fetchExceptionsFromSupabase}
+              disabled={isSyncing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
             >
-              <Bell className="h-4 w-4" />
-              <span className="absolute right-2.5 top-2.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+              <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
+              <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
             </button>
 
-            <span className="flex items-center gap-2 rounded-lg bg-sky-100 px-3 py-2.5 text-xs font-bold text-sky-700">
-              <CalendarDays className="h-4 w-4 text-sky-700" /> September 2026
+            {/* Tombol Atur Rule Alert */}
+            <button
+              onClick={() => setIsRuleModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+            >
+              <Sliders className="h-3.5 w-3.5 text-slate-600" />
+              <span>Atur Rule Alert</span>
+            </button>
+
+            {/* Tombol Notifikasi Lonceng & Popover */}
+            <div className="relative">
+              <button
+                aria-label="Lihat Notifikasi"
+                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                  isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
+                }`}
+              >
+                <Bell className="h-4 w-4" />
+                {metrics.total > 0 && (
+                  <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                )}
+              </button>
+
+              <NotificationPopover
+                isOpen={isNotificationOpen}
+                onClose={() => setIsNotificationOpen(false)}
+                periode={currentLivePeriod}
+                totalExceptionCount={metrics.total}
+                isLoading={isLoading}
+                categorySummaries={categorySummaries}
+              />
+            </div>
+
+            {/* Badge Periode Aktif Real-Time */}
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
+              <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
+              {currentLivePeriod}
             </span>
           </div>
         </div>
 
-        {/* Toast Notifikasi */}
-        {toastMessage && (
-          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in duration-200">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              <p className="text-xs font-bold text-emerald-900">{toastMessage}</p>
-            </div>
-            <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-900">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        )}
-
-        {/* KPI Cards Dinamis */}
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between">
-              <p className="text-[11px] font-bold tracking-wider text-slate-500">TOTAL EXCEPTION</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100 text-rose-600">
-                <AlertTriangle className="h-4 w-4" />
+        {/* 4 Kartu KPI Makro (dengan Skeleton) */}
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {isLoading ? (
+            Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
+                <div className="flex items-start justify-between">
+                  <div className="h-3 w-24 rounded bg-slate-200" />
+                  <div className="h-7 w-7 rounded-lg bg-slate-200" />
+                </div>
+                <div className="mt-3 h-7 w-16 rounded bg-slate-200" />
+                <div className="mt-2 h-3 w-32 rounded bg-slate-100" />
               </div>
-            </div>
-            <div className="mt-1 flex items-center gap-3">
-              <h2 className="text-2xl font-extrabold text-slate-900">{metrics.total}</h2>
-              <StatusBadge value={`+${metrics.total}`} tone="danger" />
-            </div>
-            <p className="mt-1 text-[11px] text-slate-400">Memerlukan review (Review Flag = YES)</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between">
-              <p className="text-[11px] font-bold tracking-wider text-slate-500">OVER BUDGET</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-pink-100 text-pink-600">
-                <TrendingUp className="h-4 w-4" />
-              </div>
-            </div>
-            <h2 className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.overBudgetCount}</h2>
-            <p className="mt-1 text-[11px] text-slate-400">Total {formatRupiah(metrics.overBudgetNominal)}</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between">
-              <p className="text-[11px] font-bold tracking-wider text-slate-500">HIGH COST</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-600">
-                <Flame className="h-4 w-4" />
-              </div>
-            </div>
-            <h2 className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.highCostCount}</h2>
-            <p className="mt-1 text-[11px] text-slate-400">Di atas threshold {formatRupiah(Number(ruleHighCostLimit))}</p>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex items-start justify-between">
-              <p className="text-[11px] font-bold tracking-wider text-slate-500">DATA QUALITY</p>
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-100 text-sky-600">
-                <Info className="h-4 w-4" />
-              </div>
-            </div>
-            <h2 className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.dataQualityCount}</h2>
-            <p className="mt-1 text-[11px] text-slate-400">Missing Evidence & Job Not Found</p>
-          </div>
-        </div>
-
-        {/* Alert Box SLA 24 Jam & Distribusi Prioritas */}
-        <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
-            <div className="flex items-start gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#E05262] text-white">
-                <AlertTriangle className="h-5 w-5" />
-              </div>
-              <div className="flex-1">
-                <p className="text-sm font-bold text-rose-900">
-                  {metrics.criticalSlaCount} exception kritis melewati SLA 24 jam
-                </p>
-                <p className="mt-1 text-xs text-rose-700">
-                  Akumulasi biaya anomali sebesar {formatRupiah(metrics.slaNominal)}. Segera selesaikan agar tidak menghambat penutupan buku bulanan.
+            ))
+          ) : (
+            <>
+              {/* TOTAL EXCEPTION */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
+                    TOTAL EXCEPTION
+                  </span>
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ffe4e6] text-[#e11d48]">
+                    <AlertCircle className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.total}</h2>
+                  {metrics.criticalCount > 0 && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-[#ffe4e6] text-[#e11d48]">
+                      +{metrics.criticalCount}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  {metrics.criticalCount} transaksi berisiko tinggi
                 </p>
               </div>
-              <CustomButton
-                size="sm"
-                className="bg-[#E05262] hover:bg-[#c93f4e]"
-                onClick={() => {
-                  setSelectedTag("OVER_BUDGET");
-                  setSelectedStatus("Terbuka");
-                }}
-              >
-                Tinjau Sekarang
-              </CustomButton>
-            </div>
-          </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-900">Distribusi Prioritas Anomali</h3>
-            <div className="mt-4 grid grid-cols-4 gap-3">
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-rose-600">Critical</p>
-                <p className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.distribution.critical}</p>
+              {/* OVER BUDGET */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
+                    OVER BUDGET
+                  </span>
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ffe4e6] text-[#e11d48]">
+                    <TrendingUp className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.overBudgetCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Total {formatCompactRupiah(metrics.overBudgetNominal)}
+                </p>
               </div>
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-rose-600">High</p>
-                <p className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.distribution.high}</p>
+
+              {/* HIGH COST */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
+                    HIGH COST
+                  </span>
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#fef3c7] text-[#d97706]">
+                    <Flame className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.highCostCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">Di atas threshold rule</p>
               </div>
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-amber-600">Medium</p>
-                <p className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.distribution.medium}</p>
+
+              {/* DATA QUALITY */}
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between">
+                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
+                    DATA QUALITY
+                  </span>
+                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#e0f2fe] text-[#0284c7]">
+                    <ShieldAlert className="h-4 w-4" />
+                  </div>
+                </div>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.dataQualityCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  {metrics.missingEvidenceCount} evidence · {metrics.duplicateCount} duplikasi
+                </p>
               </div>
-              <div className="text-center">
-                <p className="text-[11px] font-semibold text-slate-500">Low</p>
-                <p className="mt-1 text-2xl font-extrabold text-slate-900">{metrics.distribution.low}</p>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
 
-        {/* Tabel Exception dengan Filter */}
-        <div className="mt-6 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* Baris SLA Alert & Distribusi Prioritas (dengan Skeleton) */}
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
+          {isLoading ? (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse flex items-center justify-between">
+                <div className="flex items-center gap-3.5">
+                  <div className="h-11 w-11 rounded-full bg-slate-200" />
+                  <div className="space-y-2">
+                    <div className="h-4 w-48 rounded bg-slate-200" />
+                    <div className="h-3 w-64 rounded bg-slate-100" />
+                  </div>
+                </div>
+                <div className="h-8 w-28 rounded-lg bg-slate-200" />
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse">
+                <div className="h-4 w-32 rounded bg-slate-200" />
+                <div className="mt-4 flex justify-between">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex flex-col items-center gap-2">
+                      <div className="h-4 w-12 rounded-full bg-slate-200" />
+                      <div className="h-6 w-6 rounded bg-slate-200" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Banner SLA 24 Jam */}
+              {metrics.criticalSlaCount > 0 ? (
+                <div className="flex items-center justify-between rounded-xl border border-[#fecdd3] bg-[#fff1f2] p-5 shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#e11d48] text-white shadow-sm">
+                      <AlertTriangle className="h-5 w-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#9f1239]">
+                        {metrics.criticalSlaCount} exception kritis melewati SLA 24 jam
+                      </h3>
+                      <p className="mt-0.5 text-xs text-[#be123c]">
+                        Nilai terdampak {formatCompactRupiah(metrics.slaNominal)}. Segera lakukan review agar proses closing tidak tertunda.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setSelectedTag("Semua Tipe");
+                      setSelectedStatus("Terbuka");
+                    }}
+                    className="rounded-lg bg-[#e11d48] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#be123c] active:scale-95"
+                  >
+                    Tinjau Sekarang
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm">
+                      <CheckCircle2 className="h-5 w-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-900">
+                        Tidak ada transaksi yang melebihi SLA 24 jam
+                      </h3>
+                      <p className="mt-0.5 text-xs text-emerald-700">
+                        Semua status exception berada dalam batas waktu penanganan yang aman.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Distribusi Prioritas */}
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Distribusi Prioritas</h3>
+                <div className="mt-3 flex items-center justify-between">
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">
+                      Critical
+                    </span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.criticalCount}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">
+                      High
+                    </span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.highCount}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#fef3c7] px-2.5 py-0.5 text-[10px] font-bold text-[#d97706]">
+                      Medium
+                    </span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.mediumCount}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#f1f5f9] px-2.5 py-0.5 text-[10px] font-bold text-[#64748b]">
+                      Low
+                    </span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.lowCount}</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Tabel Daftar Exception */}
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          {/* Header Tabel & Filter Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Daftar Exception Transaksi</h3>
+              <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
               <p className="text-[11px] text-slate-400">
-                Data ditarik langsung dari Supabase (`c2_cost_transactions`) secara real-time
+                Data real-time disinkronkan dengan database Supabase
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Search Bar */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Input Pencarian */}
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-700" />
                 <input
                   type="text"
-                  placeholder="Cari customer, ID, atau job..."
+                  placeholder="Cari customer atau ID..."
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
                     setCurrentPage(1);
                   }}
-                  className="w-56 rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                  className="w-56 rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-xs font-medium text-slate-900 placeholder:text-slate-800 outline-none focus:border-[#0a7ebf] focus:ring-1 focus:ring-[#0a7ebf]"
                 />
               </div>
 
-              {/* Filter Cabang Operasional */}
-              <select
-                value={selectedBranch}
-                onChange={(e) => {
-                  setSelectedBranch(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400"
-              >
-                <option value="ALL">Semua Cabang</option>
-                <option value="Jakarta">Jakarta Pusat</option>
-                <option value="Surabaya">Surabaya</option>
-                <option value="Semarang">Semarang</option>
-              </select>
-
-              {/* Filter Tipe Anomali */}
+              {/* Dropdown Filter Tipe Masalah */}
               <select
                 value={selectedTag}
                 onChange={(e) => {
                   setSelectedTag(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0a7ebf]"
               >
-                <option value="ALL">Semua Tipe Anomali</option>
-                <option value="OVER_BUDGET">Over Budget</option>
-                <option value="MISSING_EVIDENCE">Missing Evidence</option>
-                <option value="JOB_NOT_FOUND">Job Not Found</option>
-                <option value="HIGH_COST">High Cost</option>
+                <option value="Semua Tipe">Semua Tipe</option>
+                <option value="Over Budget">Over Budget</option>
+                <option value="High Cost">High Cost</option>
+                <option value="Missing Evidence">Missing Evidence</option>
+                <option value="Duplicate Data">Duplicate Data</option>
               </select>
 
-              {/* Filter Status Resolusi */}
+              {/* Dropdown Filter Status */}
               <select
                 value={selectedStatus}
                 onChange={(e) => {
                   setSelectedStatus(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-sky-400"
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-[#0a7ebf]"
               >
-                <option value="ALL">Semua Status</option>
+                <option value="Semua Status">Semua Status</option>
                 <option value="Terbuka">Terbuka</option>
                 <option value="Ditinjau">Ditinjau</option>
+                <option value="Dalam Proses">Dalam Proses</option>
                 <option value="Selesai">Selesai</option>
               </select>
             </div>
           </div>
 
-          {/* Grid Tabel Data */}
-          <div className="mt-4 overflow-x-auto rounded-lg border border-slate-100">
-            <table className="w-full text-left text-[13px]">
+          {/* Tabel Baris Anomali */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
               <thead>
-                <tr className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-400">
-                  <th className="px-4 py-3 font-bold">ID Exception</th>
-                  <th className="px-4 py-3 font-bold">Customer & Job</th>
-                  <th className="px-4 py-3 font-bold">Cabang</th>
-                  <th className="px-4 py-3 font-bold text-right">Nominal Aktual</th>
-                  <th className="px-4 py-3 font-bold">Tag Anomali</th>
-                  <th className="px-4 py-3 font-bold">Prioritas</th>
-                  <th className="px-4 py-3 font-bold">Status</th>
-                  <th className="px-4 py-3 font-bold text-center">Aksi</th>
+                <tr className="border-b border-slate-100 text-[11px] font-semibold text-slate-400">
+                  <th className="py-3 px-3">ID</th>
+                  <th className="py-3 px-3">CUSTOMER</th>
+                  <th className="py-3 px-3">NOMINAL</th>
+                  <th className="py-3 px-3">TIPE MASALAH</th>
+                  <th className="py-3 px-3">PRIORITAS</th>
+                  <th className="py-3 px-3">STATUS</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-50">
                 {isLoading ? (
-                  <tr>
-                    <td colSpan={8} className="py-10 text-center text-xs text-slate-400">
-                      <div className="flex items-center justify-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
-                        <span>Menghubungkan ke Supabase...</span>
-                      </div>
-                    </td>
-                  </tr>
+                  Array.from({ length: 6 }).map((_, idx) => (
+                    <tr key={idx} className="animate-pulse">
+                      <td className="py-3.5 px-3">
+                        <div className="h-4 w-16 rounded bg-slate-200" />
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="h-4 w-36 rounded bg-slate-200" />
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="h-4 w-24 rounded bg-slate-200" />
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="h-5 w-20 rounded-full bg-slate-200" />
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="h-5 w-16 rounded-full bg-slate-200" />
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <div className="h-5 w-16 rounded-full bg-slate-200" />
+                      </td>
+                    </tr>
+                  ))
                 ) : paginatedData.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-xs text-slate-400">
-                      Tidak ada transaksi anomali yang cocok dengan kriteria filter.
+                    <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
+                      Tidak ada data exception yang ditemukan di Supabase.
                     </td>
                   </tr>
                 ) : (
-                  paginatedData.map((e) => {
-                    const statusTone: Tone =
-                      e.status === "Selesai" ? "success" : e.status === "Ditinjau" ? "warning" : "info";
-
-                    const priorityTone: Tone =
-                      e.priority === "Critical" || e.priority === "High"
-                        ? "danger"
-                        : e.priority === "Medium"
-                        ? "warning"
-                        : "success";
-
-                    return (
-                      <tr key={e.id} className="hover:bg-slate-50/70 transition">
-                        <td className="px-4 py-3 font-semibold text-slate-600 text-xs">
-                          {e.id}
-                          {e.slaExceeded && e.status !== "Selesai" && (
-                            <span className="block text-[9px] font-bold text-rose-600 mt-0.5">&gt; 24 Jam SLA</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <p className="font-bold text-slate-800 text-xs">{e.customer}</p>
-                          <p className="text-[11px] text-slate-400 font-mono">
-                            {e.jobNumber === "UNMATCHED" || e.jobNumber.includes("UNKNOWN") ? (
-                              <span className="text-amber-600 font-bold">Job Belum Terdaftar</span>
-                            ) : (
-                              e.jobNumber
-                            )}
-                          </p>
-                        </td>
-                        <td className="px-4 py-3 text-xs font-semibold text-slate-600">{e.branch}</td>
-                        <td className="px-4 py-3 text-right font-extrabold text-slate-900 text-xs">
-                          {formatRupiah(e.actualAmount)}
-                          {e.varianceAmount > 0 && (
-                            <span className="block text-[10px] font-semibold text-rose-500">
-                              +{formatRupiah(e.varianceAmount)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            {e.tags.map((tag) => (
-                              <span
-                                key={tag}
-                                className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${
-                                  tag === "OVER_BUDGET"
-                                    ? "bg-[#FEE2E2] text-[#E05262]"
-                                    : tag === "MISSING_EVIDENCE"
-                                    ? "bg-[#FEF3C7] text-[#D99A18]"
-                                    : tag === "JOB_NOT_FOUND"
-                                    ? "bg-[#FFEDD5] text-[#EA580C]"
-                                    : "bg-purple-100 text-purple-700"
-                                }`}
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <StatusBadge value={e.priority} tone={priorityTone} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <StatusBadge value={e.status} tone={statusTone} />
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <button
-                            onClick={() => {
-                              setActiveItem(e);
-                              setInputResolutionNotes(e.resolutionNotes || "");
-                            }}
-                            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-sky-600 shadow-sm transition hover:bg-sky-50"
-                          >
-                            Review
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })
+                  paginatedData.map((row) => (
+                    <tr key={row.dbId} className="hover:bg-slate-50/60 transition">
+                      <td className="py-3.5 px-3 font-mono font-medium text-slate-500">
+                        {row.id}
+                      </td>
+                      <td className="py-3.5 px-3 font-bold text-slate-800">
+                        {row.customer}
+                      </td>
+                      <td className="py-3.5 px-3 font-medium text-slate-900">
+                        {formatRupiah(row.nominal)}
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span
+                          className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getTagPillClass(
+                            row.tipeMasalah
+                          )}`}
+                        >
+                          {row.tipeMasalah}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span
+                          className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getPriorityPillClass(
+                            row.prioritas
+                          )}`}
+                        >
+                          {row.prioritas}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span
+                          className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getStatusPillClass(
+                            row.status
+                          )}`}
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
                 )}
               </tbody>
             </table>
           </div>
 
-          {/* Pagination */}
-          <div className="mt-4 flex items-center justify-between">
-            <p className="text-[11px] text-slate-400">
-              Menampilkan {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0} -{" "}
-              {Math.min(currentPage * itemsPerPage, filteredData.length)} dari {filteredData.length} anomali
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" /> Sebelumnya
-              </button>
+          {/* Footer Pagination */}
+          <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
+            {isLoading ? (
+              <>
+                <div className="h-3 w-44 rounded bg-slate-200 animate-pulse" />
+                <div className="h-6 w-32 rounded-full bg-slate-200 animate-pulse" />
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-slate-400">
+                  Menampilkan {totalItems > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–
+                  {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
+                </p>
 
-              {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((pageNum) => (
-                <button
-                  key={pageNum}
-                  onClick={() => setCurrentPage(pageNum)}
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg text-xs font-bold transition ${
-                    currentPage === pageNum
-                      ? "bg-slate-900 text-white"
-                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {pageNum}
-                </button>
-              ))}
-
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-              >
-                Berikutnya <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
+                <div className="flex items-center rounded-full border border-slate-300 px-3 py-1 gap-3">
+                  {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((num) => (
+                    <button
+                      key={num}
+                      onClick={() => setCurrentPage(num)}
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                        currentPage === num
+                          ? "bg-[#0a7ebf] text-white"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  <button
+                    disabled={currentPage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                    className="text-slate-500 hover:text-slate-900 disabled:opacity-30"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Modal Review & Tindak Lanjut Resolusi */}
-        {activeItem && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-start justify-between border-b border-slate-100 pb-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="rounded bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
-                      {activeItem.id}
-                    </span>
-                    <h3 className="text-base font-extrabold text-slate-900">Review & Tindak Lanjut Anomali</h3>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">Voucher / ID Transaksi: {activeItem.transactionId}</p>
-                </div>
-                <button
-                  onClick={() => setActiveItem(null)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              {/* Rincian Transaksi */}
-              <div className="mt-4 space-y-3 rounded-xl bg-slate-50 p-4 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Nama Customer:</span>
-                  <span className="font-bold text-slate-900">{activeItem.customer}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Nomor Pekerjaan:</span>
-                  <span className="font-mono font-bold text-slate-900">{activeItem.jobNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Cabang Operasional:</span>
-                  <span className="font-semibold text-slate-700">{activeItem.branch}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Pagu Anggaran (Planned):</span>
-                  <span className="font-bold text-slate-900">{formatRupiah(activeItem.budgetAmount)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Realisasi Aktual:</span>
-                  <span className="font-bold text-slate-900">{formatRupiah(activeItem.actualAmount)}</span>
-                </div>
-                <div className="flex justify-between border-t border-slate-200/60 pt-2">
-                  <span className="text-slate-500">Deviasi Biaya:</span>
-                  <span className="font-extrabold text-rose-600">
-                    {activeItem.varianceAmount > 0 ? `+${formatRupiah(activeItem.varianceAmount)}` : "Rp 0"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Form Input Catatan Resolusi */}
-              <div className="mt-4">
-                <label className="block text-xs font-bold text-slate-700">
-                  Catatan Justifikasi / Audit Trail (Resolution Notes)
-                </label>
-                <textarea
-                  rows={3}
-                  value={inputResolutionNotes}
-                  onChange={(e) => setInputResolutionNotes(e.target.value)}
-                  placeholder="Contoh: Bukti invoice fisik telah diverifikasi oleh tim Billing dan disetujui untuk ditutup..."
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 p-3 text-xs outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-                />
-              </div>
-
-              {/* Tombol Aksi */}
-              <div className="mt-5 flex items-center justify-end gap-2 border-t border-slate-100 pt-4">
-                <CustomButton variant="outline" size="sm" onClick={() => setActiveItem(null)}>
-                  Batal
-                </CustomButton>
-                <CustomButton
-                  variant="outline"
-                  size="sm"
-                  disabled={isSubmittingResolution}
-                  onClick={() => handleResolveException("Ditinjau")}
-                  className="text-amber-700 border-amber-200 hover:bg-amber-50"
-                >
-                  Tandai Ditinjau
-                </CustomButton>
-                <CustomButton
-                  size="sm"
-                  disabled={isSubmittingResolution}
-                  onClick={() => handleResolveException("Selesai")}
-                  className="bg-emerald-600 hover:bg-emerald-700"
-                >
-                  {isSubmittingResolution ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <ShieldCheck className="h-4 w-4" />
-                  )}
-                  Selesaikan Anomali
-                </CustomButton>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal Atur Rule Alert */}
+        {/* Modal Konfigurasi Rule Alert */}
         {isRuleModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-              <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-100 text-sky-600">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-[#0a7ebf]">
                     <Sliders className="h-4 w-4" />
                   </div>
                   <div>
-                    <h3 className="text-base font-extrabold text-slate-900">Konfigurasi Rule Alert Biaya</h3>
+                    <h3 className="text-sm font-bold text-slate-900">Konfigurasi Rule Alert Biaya</h3>
                     <p className="text-[11px] text-slate-400">Parameter klasifikasi anomali otomatis</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setIsRuleModalOpen(false)}
-                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-4 w-4" />
                 </button>
               </div>
 
@@ -851,7 +1005,7 @@ export default function CostExceptionPage() {
                     type="number"
                     value={ruleBudgetVariance}
                     onChange={(e) => setRuleBudgetVariance(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-[#0a7ebf]"
                   />
                 </div>
 
@@ -861,33 +1015,35 @@ export default function CostExceptionPage() {
                     type="number"
                     value={ruleHighCostLimit}
                     onChange={(e) => setRuleHighCostLimit(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-sky-400"
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-[#0a7ebf]"
                   />
                 </div>
 
-                <div className="rounded-lg bg-sky-50 p-3 text-[11px] text-sky-800 border border-sky-100">
-                  <p className="font-bold">Ketentuan Sistem Otomatis:</p>
-                  <p className="mt-0.5">
-                    • MISSING_EVIDENCE aktif jika kuitansi kosong[cite: 1, 11].<br />
-                    • JOB_NOT_FOUND otomatis aktif jika tidak ada referensi job valid di master operasional[cite: 1, 11].
+                <div className="rounded-lg bg-sky-50/70 p-3 text-[11px] text-sky-800 border border-sky-100">
+                  <p className="font-bold">Ketentuan Rule Engine:</p>
+                  <p className="mt-0.5 leading-relaxed">
+                    • Missing Evidence otomatis mendeteksi kuitansi kosong.<br />
+                    • Duplicate Data otomatis mendeteksi nomor job tidak terdaftar.
                   </p>
                 </div>
               </div>
 
-              <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 pt-4">
-                <CustomButton variant="outline" size="sm" onClick={() => setIsRuleModalOpen(false)}>
+              <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  onClick={() => setIsRuleModalOpen(false)}
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                >
                   Batal
-                </CustomButton>
-                <CustomButton
-                  size="sm"
+                </button>
+                <button
                   onClick={() => {
                     setIsRuleModalOpen(false);
-                    showToast("Aturan alert berhasil diperbarui dan diterapkan ke seluruh transaksi.");
+                    fetchExceptionsFromSupabase();
                   }}
-                  className="bg-[#0a7ebf] hover:bg-[#08689d]"
+                  className="rounded-lg bg-[#0a7ebf] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d]"
                 >
                   Simpan Perubahan
-                </CustomButton>
+                </button>
               </div>
             </div>
           </div>

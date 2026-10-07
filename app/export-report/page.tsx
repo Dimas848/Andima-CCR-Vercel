@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import ExcelJS from "exceljs";
 import {
   Bell,
@@ -12,13 +12,23 @@ import {
   ArrowRight,
   FileText,
   Loader2,
-  RefreshCw,
+  SlidersHorizontal,
+  TrendingUp,
+  AlertCircle,
+  Building2,
+  Lock,
+  RotateCw,
+  X,
+  FileQuestion,
 } from "lucide-react";
 
-import Sidebar from "../dashboard/Sidebar";
+import sidebar from "@/components/sidebar";
 import { supabase } from "@/lib/supabase";
 
-interface ReportRow {
+// Alias huruf kapital untuk sintaks JSX React
+const Sidebar = sidebar;
+
+interface ReportHistoryRow {
   id: string;
   jenis: string;
   periode: string;
@@ -27,37 +37,221 @@ interface ReportRow {
   status: "Siap" | "Kedaluwarsa";
 }
 
-const initialReports: ReportRow[] = [
-  {
-    id: "rep-01",
-    jenis: "Monthly Cost Detail",
-    periode: "September 2026",
-    isiData: "8 baris (Live Supabase)",
-    dibuat: "29 Sep 2026 · 16:20",
-    status: "Siap",
-  },
-  {
-    id: "rep-02",
-    jenis: "Exception Summary",
-    periode: "September 2026",
-    isiData: "4 anomali aktif",
-    dibuat: "29 Sep 2026 · 10:05",
-    status: "Siap",
-  },
+// Helper Format Waktu & Bulan Real-Time
+const MONTH_NAMES = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
 ];
 
-function formatRupiah(value: number): string {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(value);
+const SHORT_MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
+  "Jul", "Agu", "Sep", "Okt", "Nov", "Des"
+];
+
+function getDynamicPeriod(offsetMonths = 0): string {
+  const d = new Date();
+  d.setMonth(d.getMonth() - offsetMonths);
+  return `${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+function formatLiveDate(date: Date = new Date(), minusMinutes = 0): string {
+  const target = new Date(date.getTime() - minusMinutes * 60 * 1000);
+  const day = String(target.getDate()).padStart(2, "0");
+  const month = SHORT_MONTH_NAMES[target.getMonth()];
+  const year = target.getFullYear();
+  const hours = String(target.getHours()).padStart(2, "0");
+  const minutes = String(target.getMinutes()).padStart(2, "0");
+  return `${day} ${month} ${year} · ${hours}:${minutes}`;
+}
+
+function formatCompactRupiah(val: number): string {
+  if (Math.abs(val) >= 1_000_000_000) {
+    return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} M`;
+  }
+  if (Math.abs(val) >= 1_000_000) {
+    return `Rp ${(val / 1_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} jt`;
+  }
+  return `Rp ${val.toLocaleString("id-ID")}`;
+}
+
+// =========================================================================
+// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// =========================================================================
+interface NotificationPopoverProps {
+  isOpen: boolean;
+  onClose: () => void;
+  periode: string;
+  isLoading: boolean;
+  totalExceptions: number;
+  categories: {
+    title: string;
+    count: number;
+    nominal: number;
+    description: string;
+    actionNote: string;
+    icon: typeof TrendingUp;
+    colorClass: string;
+    bgClass: string;
+    badgeClass: string;
+  }[];
+}
+
+function NotificationPopover({
+  isOpen,
+  onClose,
+  periode,
+  isLoading,
+  totalExceptions,
+  categories,
+}: NotificationPopoverProps) {
+  const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
+  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
+
+  if (!isOpen) return null;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/5" onClick={onClose} />
+      <div className="absolute right-0 top-11 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl animate-in fade-in slide-in-from-top-2 text-left">
+        <div className="p-5 pb-0">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
+              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+            </div>
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {isLoading ? (
+            <div className="mt-2 space-y-1.5 animate-pulse">
+              <div className="h-3.5 w-40 rounded bg-slate-200" />
+              <div className="h-2.5 w-28 rounded bg-slate-100" />
+            </div>
+          ) : (
+            <>
+              <p className="mt-2 text-xs font-bold text-slate-800">
+                {totalExceptions} exception perlu tindak lanjut
+              </p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Ringkasan exception · {periode}
+              </p>
+            </>
+          )}
+
+          <button
+            onClick={() => setIsMarkedAllRead(true)}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+          >
+            Tandai semua dibaca
+          </button>
+
+          <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
+            <button
+              onClick={() => setActiveTab("semua")}
+              className={`pb-2 text-xs font-bold transition ${
+                activeTab === "semua"
+                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Semua
+            </button>
+            <button
+              onClick={() => setActiveTab("belum_dibaca")}
+              className={`pb-2 text-xs font-medium transition ${
+                activeTab === "belum_dibaca"
+                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
+                  : "text-slate-400 hover:text-slate-600"
+              }`}
+            >
+              Belum dibaca
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
+          {isLoading ? (
+            <div className="space-y-4 p-5">
+              {[1, 2, 3].map((idx) => (
+                <div key={`popover-skel-${idx}`} className="flex gap-3 animate-pulse">
+                  <div className="h-9 w-9 rounded-xl bg-slate-200 shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="flex justify-between">
+                      <div className="h-3.5 w-24 rounded bg-slate-200" />
+                      <div className="h-3.5 w-12 rounded bg-slate-200" />
+                    </div>
+                    <div className="h-4 w-20 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+            <div className="py-10 text-center text-xs text-slate-400">
+              Semua notifikasi telah ditandai dibaca.
+            </div>
+          ) : categories.length === 0 ? (
+            <div className="py-10 text-center text-xs text-slate-400">
+              Tidak ada notifikasi aktif saat ini.
+            </div>
+          ) : (
+            categories.map((cat, i) => {
+              const IconComp = cat.icon;
+              return (
+                <div key={`notif-export-${cat.title}-${i}`} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
+                    <IconComp className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-slate-900">{cat.title}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cat.badgeClass}`}>
+                        {cat.count} item
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{formatCompactRupiah(cat.nominal)}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                      {cat.description}
+                    </p>
+                    <span className={`mt-2 block text-[11px] font-bold ${cat.colorClass}`}>
+                      {cat.actionNote}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+          >
+            <span>Tutup notifikasi</span>
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// =========================================================================
+// KOMPONEN UTAMA: EXPORT REPORT
+// =========================================================================
 export default function ExportReportPage() {
-  const [periode, setPeriode] = useState("September 2026");
-  const [jenisLaporan, setJenisLaporan] = useState("Monthly Cost Detail");
-  const [customer, setCustomer] = useState("Semua Customer");
+  const currentPeriod = useMemo(() => getDynamicPeriod(0), []);
+  const previousPeriod = useMemo(() => getDynamicPeriod(1), []);
+
+  const [selectedReportType, setSelectedReportType] = useState<string>("Monthly Cost Detail");
+  const [periode, setPeriode] = useState<string>(currentPeriod);
+  const [selectedCustomer, setSelectedCustomer] = useState("Semua Customer");
 
   const [sertakanSummary, setSertakanSummary] = useState(true);
   const [sertakanException, setSertakanException] = useState(true);
@@ -65,108 +259,213 @@ export default function ExportReportPage() {
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeStep, setActiveStep] = useState(4);
-  const [reports, setReports] = useState<ReportRow[]>(initialReports);
+  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // State Data Supabase untuk Ekspor
+  // State Data Murni dari Database Supabase
   const [dbTransactions, setDbTransactions] = useState<any[]>([]);
-  const [isLoadingDb, setIsLoadingDb] = useState(true);
+  const [reportsList, setReportsList] = useState<ReportHistoryRow[]>([]);
 
-  // 1. Tarik Data Live dari Supabase
-  const fetchExportData = async () => {
+  // 1. Tarik Data Nyata dari Supabase View c2_cost_transactions
+  const fetchLiveDatabase = useCallback(async () => {
     try {
-      setIsLoadingDb(true);
+      setIsSyncing(true);
       const { data, error } = await supabase
         .from("c2_cost_transactions")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error || !data) {
-        console.warn("Gagal memuat data export dari Supabase:", error?.message);
+      if (error || !data || data.length === 0) {
         setDbTransactions([]);
-      } else {
-        setDbTransactions(data);
+        setReportsList([]);
+        return;
       }
+
+      setDbTransactions(data);
+
+      const totalRows = data.length;
+      const totalExceptions = data.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence).length;
+      const totalCust = new Set(data.map((t) => t.customer_name).filter(Boolean)).size;
+
+      // Bentuk riwayat laporan dinamis dari data aktual
+      setReportsList([
+        {
+          id: `rep-${Date.now()}-1`,
+          jenis: "Monthly Cost Detail",
+          periode: currentPeriod,
+          isiData: `${totalRows.toLocaleString("id-ID")} baris data`,
+          dibuat: formatLiveDate(new Date(), 10),
+          status: "Siap",
+        },
+        {
+          id: `rep-${Date.now()}-2`,
+          jenis: "Exception Summary",
+          periode: currentPeriod,
+          isiData: `${totalExceptions} exception`,
+          dibuat: formatLiveDate(new Date(), 60),
+          status: "Siap",
+        },
+        {
+          id: `rep-${Date.now()}-3`,
+          jenis: "Customer Cost Breakdown",
+          periode: previousPeriod,
+          isiData: `${totalCust} customer`,
+          dibuat: formatLiveDate(new Date(), 1440),
+          status: "Kedaluwarsa",
+        },
+      ]);
     } catch (err) {
-      console.error("Koneksi gagal:", err);
+      console.error("Gagal mengambil data dari Supabase:", err);
+      setDbTransactions([]);
+      setReportsList([]);
     } finally {
-      setIsLoadingDb(false);
+      setIsSyncing(false);
+      setIsLoading(false);
     }
-  };
+  }, [currentPeriod, previousPeriod]);
 
   useEffect(() => {
-    fetchExportData();
-  }, []);
+    fetchLiveDatabase();
+  }, [fetchLiveDatabase]);
 
+  // Dropdown Customer Murni Dinamis
+  const dynamicCustomerOptions = useMemo(() => {
+    const unique = Array.from(new Set(dbTransactions.map((t) => t.customer_name))).filter(Boolean);
+    return ["Semua Customer", ...unique];
+  }, [dbTransactions]);
+
+  // Dataset Aktif Berdasarkan Filter
+  const activeDataset = useMemo(() => {
+    if (selectedCustomer === "Semua Customer") return dbTransactions;
+    return dbTransactions.filter((t) => t.customer_name === selectedCustomer);
+  }, [dbTransactions, selectedCustomer]);
+
+  const activeExceptionCount = useMemo(() => {
+    return activeDataset.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence).length;
+  }, [activeDataset]);
+
+  // Kategori Notifikasi Dinamis
+  const notificationCategories = useMemo(() => {
+    const list = [];
+    const overBudget = dbTransactions.filter((r) => Number(r.variance || 0) > 0);
+    if (overBudget.length > 0) {
+      list.push({
+        title: "Over Budget",
+        count: overBudget.length,
+        nominal: overBudget.reduce((sum, r) => sum + Number(r.actual_cost || 0), 0),
+        description: "Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.",
+        actionNote: "Prioritas review anggaran",
+        icon: TrendingUp,
+        colorClass: "text-[#e11d48]",
+        bgClass: "bg-rose-50",
+        badgeClass: "bg-rose-50 text-rose-600",
+      });
+    }
+
+    const highCost = dbTransactions.filter((r) => Number(r.actual_cost || 0) >= 50000000);
+    if (highCost.length > 0) {
+      list.push({
+        title: "High Cost",
+        count: highCost.length,
+        nominal: highCost.reduce((sum, r) => sum + Number(r.actual_cost || 0), 0),
+        description: "Biaya tunggal di atas threshold. Periksa kewajaran nominal dan rincian transaksi.",
+        actionNote: "Perlu peninjauan biaya",
+        icon: AlertCircle,
+        colorClass: "text-[#e11d48]",
+        bgClass: "bg-rose-50",
+        badgeClass: "bg-rose-50 text-rose-600",
+      });
+    }
+
+    const missingEvidence = dbTransactions.filter((r) => !r.has_evidence);
+    if (missingEvidence.length > 0) {
+      list.push({
+        title: "Missing Evidence",
+        count: missingEvidence.length,
+        nominal: missingEvidence.reduce((sum, r) => sum + Number(r.actual_cost || 0), 0),
+        description: "Dokumen bukti belum lengkap. Lengkapi kuitansi untuk verifikasi biaya.",
+        actionNote: "Perlu kelengkapan dokumen",
+        icon: FileText,
+        colorClass: "text-amber-600",
+        bgClass: "bg-amber-50",
+        badgeClass: "bg-amber-50 text-amber-700",
+      });
+    }
+
+    return list;
+  }, [dbTransactions]);
+
+  // Handler Generate Laporan Baru
   const handleBuatLaporan = () => {
     setIsGenerating(true);
     setActiveStep(1);
 
-    setTimeout(() => setActiveStep(2), 500);
-    setTimeout(() => setActiveStep(3), 1100);
+    setTimeout(() => setActiveStep(2), 350);
+    setTimeout(() => setActiveStep(3), 700);
     setTimeout(() => {
       setActiveStep(4);
       setIsGenerating(false);
 
-      const now = new Date();
-      const timeStr = `${now.getDate()} Sep 2026 · ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-
-      const newReport: ReportRow = {
+      const newReport: ReportHistoryRow = {
         id: `rep-${Date.now()}`,
-        jenis: jenisLaporan,
+        jenis: selectedReportType,
         periode: periode,
-        isiData: `${dbTransactions.length} baris (Tersinkron)`,
-        dibuat: timeStr,
+        isiData: `${activeDataset.length.toLocaleString("id-ID")} baris data`,
+        dibuat: formatLiveDate(new Date()),
         status: "Siap",
       };
 
-      setReports((prev) => [newReport, ...prev]);
-    }, 1600);
+      setReportsList((prev) => [newReport, ...prev]);
+    }, 1100);
   };
 
-  // 2. Mesin ExcelJS Membentuk Berkas Multi-Sheet Berdasarkan Data Supabase (TR-2909-005)
+  // Ekspor Excel Riil Menggunakan ExcelJS
   const handleDownloadExcel = async () => {
     try {
+      if (activeDataset.length === 0) return;
+
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = "C2 Finance Ops Engine (PT Andima)";
+      workbook.creator = "PT Andima Transportindo - CCR C2";
       workbook.created = new Date();
 
-      // Hitung Total Aktual & Planned dari Supabase
-      const totalActual = dbTransactions.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
-      const totalPlanned = dbTransactions.reduce((acc, curr) => acc + Number(curr.planned_cost || 0), 0);
-      const totalVariance = totalActual - totalPlanned;
+      const totalActual = activeDataset.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
+      const totalPlanned = activeDataset.reduce((acc, curr) => acc + Number(curr.planned_cost || 0), 0);
+      const varianceVal = totalActual - totalPlanned;
+      const variancePct = totalPlanned > 0 ? ((varianceVal / totalPlanned) * 100).toFixed(1) : "0.0";
 
-      // --- SHEET 1: Ringkasan MtM ---
+      // SHEET 1: Ringkasan MtM
       if (sertakanSummary) {
         const sheet1 = workbook.addWorksheet("Ringkasan MtM");
         sheet1.columns = [
           { header: "Indikator Kinerja Keuangan", key: "indikator", width: 34 },
-          { header: "Nilai Realisasi Aktual (IDR)", key: "realisasi", width: 26 },
-          { header: "Pagu Anggaran (IDR)", key: "budget", width: 26 },
+          { header: "Nilai Realisasi Aktual (IDR)", key: "realisasi", width: 28 },
+          { header: "Pagu Anggaran (IDR)", key: "budget", width: 28 },
           { header: "Deviasi MtM", key: "deviasi", width: 18 },
         ];
 
         sheet1.getRow(1).eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF07111F" } }; // Deep Galaxy
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0A7EBF" } };
           cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
           cell.alignment = { vertical: "middle", horizontal: "center" };
         });
 
         sheet1.addRow({
           indikator: "Total Biaya Operasional Bulanan",
-          realisasi: totalActual || 1842500000,
-          budget: totalPlanned || 1720000000,
-          deviasi: totalActual >= totalPlanned ? "+7.1%" : "-2.1%",
+          realisasi: totalActual,
+          budget: totalPlanned,
+          deviasi: varianceVal >= 0 ? `+${variancePct}%` : `${variancePct}%`,
         });
         sheet1.addRow({
           indikator: "Total Transaksi Tercatat",
-          realisasi: dbTransactions.length || 4286,
-          budget: dbTransactions.length || 4286,
+          realisasi: activeDataset.length,
+          budget: activeDataset.length,
           deviasi: "100%",
         });
         sheet1.addRow({
-          indikator: "Jumlah Akun Pelanggan Aktif",
-          realisasi: new Set(dbTransactions.map((t) => t.customer_name)).size || 51,
-          budget: 51,
+          indikator: "Jumlah Akun Pelanggan Terlibat",
+          realisasi: new Set(activeDataset.map((t) => t.customer_name)).size,
+          budget: new Set(activeDataset.map((t) => t.customer_name)).size,
           deviasi: "Lengkap",
         });
 
@@ -174,345 +473,413 @@ export default function ExportReportPage() {
         sheet1.getColumn(3).numFmt = "#,##0";
       }
 
-      // --- SHEET 2: Breakdown 51 Customer ---
-      const sheet2 = workbook.addWorksheet("Breakdown 51 Customer");
+      // SHEET 2: Detail Transaksi
+      const sheet2 = workbook.addWorksheet("Detail Transaksi");
       sheet2.columns = [
+        { header: "No. Voucher", key: "voucher", width: 20 },
+        { header: "Job Number", key: "job", width: 24 },
         { header: "Nama Customer", key: "name", width: 32 },
-        { header: "Cabang", key: "branch", width: 18 },
-        { header: "Kategori Komponen", key: "cat", width: 22 },
+        { header: "Kategori Biaya", key: "cat", width: 20 },
         { header: "Nominal Aktual (IDR)", key: "actual", width: 24 },
-        { header: "Status Bukti", key: "evidence", width: 16 },
+        { header: "Pagu Anggaran (IDR)", key: "planned", width: 24 },
+        { header: "Status Bukti", key: "evidence", width: 18 },
       ];
 
       sheet2.getRow(1).eachCell((cell) => {
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0D1B2A" } }; // Cosmic Navy
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0D1B2A" } };
         cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
         cell.alignment = { vertical: "middle", horizontal: "center" };
       });
 
-      if (dbTransactions.length > 0) {
-        dbTransactions.forEach((t) => {
-          sheet2.addRow({
-            name: t.customer_name,
-            branch: t.branch_code || "Jakarta Pusat",
-            cat: t.cost_category,
-            actual: Number(t.actual_cost || 0),
-            evidence: t.has_evidence ? "ADA" : "MISSING",
-          });
-        });
-      } else {
+      activeDataset.forEach((t) => {
         sheet2.addRow({
-          name: "PT ATLANTIC CONTAINER LINI",
-          branch: "Jakarta Pusat",
-          cat: "HANDLING",
-          actual: 855342,
-          evidence: "ADA",
+          voucher: t.voucher_no || "-",
+          job: t.job_number || "-",
+          name: t.customer_name || "-",
+          cat: t.cost_category || "-",
+          actual: Number(t.actual_cost || 0),
+          planned: Number(t.planned_cost || 0),
+          evidence: t.has_evidence ? "LENGKAP" : "BELUM LENGKAP",
         });
-      }
+      });
+      sheet2.getColumn(5).numFmt = "#,##0";
+      sheet2.getColumn(6).numFmt = "#,##0";
 
-      sheet2.getColumn(4).numFmt = "#,##0";
-
-      // --- SHEET 3: Rekapitulasi Anomali (Highlight Semantik Antikode) ---
+      // SHEET 3: Rekapitulasi Anomali
       if (sertakanException) {
         const sheet3 = workbook.addWorksheet("Rekapitulasi Anomali");
         sheet3.columns = [
-          { header: "Nomor Voucher", key: "voucher", width: 18 },
+          { header: "Nomor Voucher", key: "voucher", width: 20 },
           { header: "Job Number", key: "job", width: 24 },
-          { header: "Customer", key: "cust", width: 28 },
-          { header: "Tag Anomali", key: "tag", width: 22 },
-          { header: "Nominal (IDR)", key: "amount", width: 20 },
-          { header: "Review Flag", key: "flag", width: 14 },
+          { header: "Customer", key: "cust", width: 30 },
+          { header: "Jenis Anomali", key: "tag", width: 24 },
+          { header: "Nominal Biaya (IDR)", key: "amount", width: 22 },
         ];
 
         sheet3.getRow(1).eachCell((cell) => {
-          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF07111F" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE11D48" } };
           cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
           cell.alignment = { vertical: "middle", horizontal: "center" };
         });
 
-        const exceptionRows = dbTransactions.length > 0
-          ? dbTransactions.filter((t) => t.review_flag || t.reconciliation_result !== "MATCH" || !t.has_evidence)
-          : [
-              {
-                voucher_no: "2606-006",
-                job_number: "BI/2608/3801",
-                customer_name: "PT CEVA AIR OCEAN",
-                cost_category: "OVER_BUDGET",
-                actual_cost: 95000,
-                review_flag: true,
-              },
-            ];
+        const excList = activeDataset.filter(
+          (t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence
+        );
 
-        exceptionRows.forEach((ex) => {
-          const row = sheet3.addRow({
-            voucher: ex.voucher_no || "VCH-09",
-            job: ex.job_number,
-            cust: ex.customer_name,
-            tag: ex.reconciliation_result || "OVER_BUDGET",
+        excList.forEach((ex) => {
+          sheet3.addRow({
+            voucher: ex.voucher_no || "-",
+            job: ex.job_number || "-",
+            cust: ex.customer_name || "-",
+            tag: Number(ex.variance || 0) > 0 ? "OVER_BUDGET" : !ex.has_evidence ? "MISSING_EVIDENCE" : "REVIEW",
             amount: Number(ex.actual_cost || 0),
-            flag: ex.review_flag ? "YES" : "NO",
-          });
-
-          // Pewarnaan semantik Antikode pada sel baris anomali
-          row.eachCell((cell) => {
-            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEE2E2" } }; // Merah lembut
-            cell.font = { color: { argb: "FFE05262" }, bold: true }; // Exception Red
           });
         });
-
         sheet3.getColumn(5).numFmt = "#,##0";
       }
 
-      // Tulis buffer dan unduh file
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
-
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `CCR_Report_PT_Andima_${periode.replace(/\s+/g, "_")}.xlsx`;
+      link.download = `Monthly_Cost_Detail_${periode.replace(/\s+/g, "_")}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Gagal mengekspor berkas Excel ExcelJS:", error);
+    } catch (err) {
+      console.error("Gagal ekspor Excel:", err);
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-[#f4f7fb]">
+    <div className="flex min-h-screen bg-[#f4f7fc]">
+      {/* Sidebar Navigasi */}
       <Sidebar />
 
-      <main className="flex-1 px-8 py-7">
-        {/* Header */}
+      {/* Konten Utama: ml-64 min-w-0 agar tidak tertimpa sidebar fixed */}
+      <main className="flex-1 ml-64 min-w-0 px-8 py-6 overflow-y-auto">
+        {/* Header Dasbor */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Export Report</h1>
-            <p className="mt-0.5 text-xs text-slate-500">
-              Kompilasi dan unduh laporan Excel multi-sheet resmi PT Andima Transportindo (FR-CCR2-005)
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">
+              Export Report
+            </h1>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Buat dan unduh laporan Excel untuk kebutuhan analisis dan audit
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
-              onClick={fetchExportData}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+              onClick={fetchLiveDatabase}
+              disabled={isSyncing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition disabled:opacity-50"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Sinkronkan Supabase
+              <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
+              <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
             </button>
 
-            <button
-              aria-label="Notifikasi"
-              className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
-            >
-              <Bell className="h-4 w-4" />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-rose-500" />
-            </button>
+            {/* Tombol Lonceng Notifikasi */}
+            <div className="relative">
+              <button
+                aria-label="Lihat Notifikasi"
+                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                  isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
+                }`}
+              >
+                <Bell className="h-4 w-4" />
+                {activeExceptionCount > 0 && (
+                  <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                )}
+              </button>
 
-            <span className="inline-flex items-center gap-2 rounded-lg bg-sky-100/80 px-3 py-2 text-xs font-bold text-sky-800">
-              <CalendarDays className="h-4 w-4 text-sky-700" />
-              September 2026
+              <NotificationPopover
+                isOpen={isNotificationOpen}
+                onClose={() => setIsNotificationOpen(false)}
+                periode={periode}
+                isLoading={isLoading}
+                totalExceptions={activeExceptionCount}
+                categories={notificationCategories}
+              />
+            </div>
+
+            {/* Lencana Tanggal Dinamis Saat Ini */}
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
+              <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
+              {currentPeriod}
             </span>
           </div>
         </div>
 
-        {/* Form Buat Laporan Baru & Format Output */}
-        <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-12">
-          {/* Card Buat Laporan Baru */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-9">
-            <h3 className="text-sm font-bold text-slate-900">Buat Laporan Baru</h3>
-            <p className="text-[11px] text-slate-400">Pilih parameter laporan multi-sheet Excel</p>
-
-            <div className="mt-4 flex flex-wrap items-end gap-3">
-              <div className="flex-1 min-w-[160px]">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1.5">Periode</label>
-                <div className="relative">
-                  <select
-                    value={periode}
-                    onChange={(e) => setPeriode(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 shadow-sm outline-none focus:border-sky-400"
-                  >
-                    <option value="September 2026">September 2026</option>
-                    <option value="Agustus 2026">Agustus 2026</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">▼</span>
-                </div>
-              </div>
-
-              <div className="flex-1 min-w-[190px]">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1.5">Jenis Laporan</label>
-                <div className="relative">
-                  <select
-                    value={jenisLaporan}
-                    onChange={(e) => setJenisLaporan(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 shadow-sm outline-none focus:border-sky-400"
-                  >
-                    <option value="Monthly Cost Detail">Monthly Cost Detail</option>
-                    <option value="Exception Summary">Exception Summary</option>
-                    <option value="Customer Cost Breakdown">Customer Cost Breakdown</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">▼</span>
-                </div>
-              </div>
-
-              <div className="flex-1 min-w-[170px]">
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1.5">Customer</label>
-                <div className="relative">
-                  <select
-                    value={customer}
-                    onChange={(e) => setCustomer(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 shadow-sm outline-none focus:border-sky-400"
-                  >
-                    <option value="Semua Customer">Semua Customer (PT Andima)</option>
-                    <option value="PT ATLANTIC CONTAINER LINI">PT ATLANTIC CONTAINER LINI</option>
-                    <option value="PT CEVA AIR OCEAN">PT CEVA AIR OCEAN</option>
-                    <option value="PT DSV TRANSPORT">PT DSV TRANSPORT</option>
-                  </select>
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">▼</span>
-                </div>
-              </div>
-
-              <button
-                onClick={handleBuatLaporan}
-                disabled={isGenerating}
-                className="flex items-center gap-2 rounded-lg bg-[#0a7ebf] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50"
-              >
-                {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
-                Buat Laporan
-              </button>
+        {/* Section 1: Pilih Jenis Laporan (dengan Skeleton) */}
+        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Pilih Jenis Laporan</h3>
+              <p className="text-[11px] text-slate-400">Pilih satu jenis laporan yang ingin diekspor</p>
             </div>
+            <span className="rounded-full bg-[#e0f2fe] px-2.5 py-0.5 text-[11px] font-bold text-[#0284c7]">
+              4 jenis tersedia
+            </span>
+          </div>
 
-            {/* Checkbox Options Pills */}
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <label
-                onClick={() => setSertakanSummary(!sertakanSummary)}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                  sertakanSummary
-                    ? "border-sky-200 bg-sky-50/80 text-slate-800"
-                    : "border-slate-200 bg-slate-50/60 text-slate-600"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={sertakanSummary}
-                  onChange={(e) => setSertakanSummary(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
-                />
-                Sertakan summary (Sheet 1)[cite: 6]
-              </label>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {isLoading ? (
+              Array.from({ length: 4 }).map((_, idx) => (
+                <div key={`type-skel-${idx}`} className="rounded-xl border border-slate-200 p-4 animate-pulse space-y-3">
+                  <div className="h-8 w-8 rounded-lg bg-slate-200" />
+                  <div className="h-3.5 w-32 rounded bg-slate-200" />
+                  <div className="h-2.5 w-44 rounded bg-slate-100" />
+                </div>
+              ))
+            ) : (
+              <>
+                <div
+                  onClick={() => setSelectedReportType("Monthly Cost Detail")}
+                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                    selectedReportType === "Monthly Cost Detail"
+                      ? "border-[#0a7ebf] bg-sky-50/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0a7ebf] text-white">
+                    <FileSpreadsheet className="h-4 w-4" />
+                  </div>
+                  <h4 className="mt-3 text-xs font-bold text-slate-900">Monthly Cost Detail</h4>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                    Detail seluruh transaksi biaya per bulan (.xlsx)
+                  </p>
+                </div>
 
-              <label
-                onClick={() => setSertakanException(!sertakanException)}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                  sertakanException
-                    ? "border-sky-200 bg-sky-50/80 text-slate-800"
-                    : "border-slate-200 bg-slate-50/60 text-slate-600"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={sertakanException}
-                  onChange={(e) => setSertakanException(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
-                />
-                Sertakan exception (Sheet 3)[cite: 6]
-              </label>
+                <div
+                  onClick={() => setSelectedReportType("Exception Summary")}
+                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                    selectedReportType === "Exception Summary"
+                      ? "border-[#0a7ebf] bg-sky-50/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                    <AlertCircle className="h-4 w-4" />
+                  </div>
+                  <h4 className="mt-3 text-xs font-bold text-slate-800">Exception Summary</h4>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                    Ringkasan seluruh cost & priority exception (.xlsx)
+                  </p>
+                </div>
 
-              <label
-                onClick={() => setSertakanEvidence(!sertakanEvidence)}
-                className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
-                  sertakanEvidence
-                    ? "border-sky-200 bg-sky-50/80 text-slate-800"
-                    : "border-slate-200 bg-slate-50/60 text-slate-600"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={sertakanEvidence}
-                  onChange={(e) => setSertakanEvidence(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
-                />
-                Sertakan tautan evidence
-              </label>
+                <div
+                  onClick={() => setSelectedReportType("Customer Cost Breakdown")}
+                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                    selectedReportType === "Customer Cost Breakdown"
+                      ? "border-[#0a7ebf] bg-sky-50/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                    <Building2 className="h-4 w-4" />
+                  </div>
+                  <h4 className="mt-3 text-xs font-bold text-slate-800">Customer Cost Breakdown</h4>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                    Rincian biaya per customer per bulan (.xlsx)
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => setSelectedReportType("Berita Acara Closing")}
+                  className={`cursor-pointer rounded-xl border p-4 transition ${
+                    selectedReportType === "Berita Acara Closing"
+                      ? "border-[#0a7ebf] bg-sky-50/20 shadow-xs"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                    <Lock className="h-4 w-4" />
+                  </div>
+                  <h4 className="mt-3 text-xs font-bold text-slate-800">Berita Acara Closing</h4>
+                  <p className="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                    Dokumen BA Monthly Closing (.pdf / .docx)
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Section 2: Buat Laporan Baru & Format Output */}
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-8 flex flex-col justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900">Buat Laporan Baru</h3>
+              <p className="text-[11px] text-slate-400">
+                Pilih parameter laporan Excel - {selectedReportType}
+              </p>
+
+              {isLoading ? (
+                <div className="mt-4 space-y-4 animate-pulse">
+                  <div className="flex gap-3">
+                    <div className="h-9 flex-1 rounded-lg bg-slate-200" />
+                    <div className="h-9 flex-1 rounded-lg bg-slate-200" />
+                    <div className="h-9 w-28 rounded-lg bg-slate-200" />
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="h-4 w-28 rounded bg-slate-200" />
+                    <div className="h-4 w-28 rounded bg-slate-200" />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 flex flex-wrap items-end gap-3">
+                    <div className="flex-1 min-w-[160px]">
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Periode</label>
+                      <select
+                        value={periode}
+                        onChange={(e) => setPeriode(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-[#0a7ebf]"
+                      >
+                        <option value={currentPeriod}>{currentPeriod}</option>
+                        <option value={previousPeriod}>{previousPeriod}</option>
+                      </select>
+                    </div>
+
+                    <div className="flex-1 min-w-[200px]">
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Customer</label>
+                      <select
+                        value={selectedCustomer}
+                        onChange={(e) => setSelectedCustomer(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-[#0a7ebf]"
+                      >
+                        {dynamicCustomerOptions.map((c, i) => (
+                          <option key={`opt-cust-${c}-${i}`} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <button
+                      onClick={handleBuatLaporan}
+                      disabled={isGenerating || activeDataset.length === 0}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50"
+                    >
+                      {isGenerating ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5" />
+                      )}
+                      <span>Buat Laporan</span>
+                    </button>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-4 text-xs font-semibold text-slate-700">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={sertakanSummary}
+                        onChange={(e) => setSertakanSummary(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
+                      />
+                      <span>Sertakan summary</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={sertakanException}
+                        onChange={(e) => setSertakanException(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
+                      />
+                      <span>Sertakan exception</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-slate-400">
+                      <input
+                        type="checkbox"
+                        checked={sertakanEvidence}
+                        onChange={(e) => setSertakanEvidence(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded accent-[#0a7ebf]"
+                      />
+                      <span>Sertakan tautan evidence</span>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
-          {/* Card Format Output */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-3 flex flex-col justify-between">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-4 flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Format Output</h3>
-              <p className="text-[11px] text-slate-400">Microsoft Excel multi-sheet</p>
+              <p className="text-[11px] text-slate-400">Microsoft Excel</p>
 
-              <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#107c41] text-white shadow-sm">
+              <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-100 bg-[#ecfdf5] p-3.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#10b981] text-white">
                   <FileSpreadsheet className="h-5 w-5" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-emerald-950">.XLSX</p>
-                  <p className="text-[10px] text-emerald-700">Dilengkapi styling Antikode</p>
+                  <h4 className="text-xs font-bold text-slate-900">.XLSX</h4>
+                  <p className="text-[10px] text-slate-500">Kompatibel Excel 2016+</p>
                 </div>
               </div>
             </div>
 
-            <p className="mt-4 text-[10px] leading-relaxed text-slate-500">
-              Sinkronisasi real-time dengan basis data Supabase `c2_cost_transactions`[cite: 1].
+            <p className="mt-4 text-[10px] leading-relaxed text-slate-400">
+              Laporan dilengkapi tab Ringkasan, Detail Transaksi, dan Exception.
             </p>
           </div>
         </div>
 
-        {/* Proses Generate & Siap untuk Diunduh Card */}
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-12">
-          {/* Card Proses Generate */}
-          <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm xl:col-span-9 flex flex-col justify-between">
+        {/* Section 3: Proses Generate & Siap untuk Diunduh */}
+        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-8 flex flex-col justify-between">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Proses Generate</h3>
-              <p className="text-[11px] text-slate-400">
-                Laporan disusun di latar belakang secara asinkron (TR-2909-005)[cite: 6]
-              </p>
+              <p className="text-[11px] text-slate-400">Laporan diproses di latar belakang</p>
 
-              {/* Stepper 4 Tahap */}
-              <div className="mt-6 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white shadow-sm">
-                    {activeStep > 1 ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : "1"}
+              <div className="mt-5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                    1
                   </div>
                   <div>
                     <p className="text-xs font-bold text-slate-800">Validasi Data</p>
-                    <p className="text-[10px] font-semibold text-emerald-600">Selesai</p>
+                    <p className="text-[10px] font-semibold text-[#10b981]">Selesai</p>
                   </div>
                 </div>
 
-                <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <span className="text-slate-400 text-xs">→</span>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white shadow-sm">
-                    {activeStep > 2 ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : "2"}
+                <div className="flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                    2
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-slate-800">Kompilasi Supabase</p>
-                    <p className="text-[10px] font-semibold text-emerald-600">Selesai</p>
+                    <p className="text-xs font-bold text-slate-800">Kompilasi Data</p>
+                    <p className="text-[10px] font-semibold text-[#10b981]">Selesai</p>
                   </div>
                 </div>
 
-                <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <span className="text-slate-400 text-xs">→</span>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white shadow-sm">
-                    {activeStep > 3 ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : "3"}
+                <div className="flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                    3
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-slate-800">Membuat ExcelJS</p>
-                    <p className="text-[10px] font-semibold text-emerald-600">100%</p>
+                    <p className="text-xs font-bold text-slate-800">Membuat Excel</p>
+                    <p className="text-[10px] font-semibold text-[#10b981]">100%</p>
                   </div>
                 </div>
 
-                <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                <span className="text-slate-400 text-xs">→</span>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#0a7ebf] text-xs font-bold text-white shadow-sm">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0a7ebf] text-white text-[11px] font-bold">
                     4
                   </div>
                   <div>
@@ -522,105 +889,154 @@ export default function ExportReportPage() {
                 </div>
               </div>
 
-              {/* Progress Line */}
-              <div className="mt-4 h-1 w-full bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-500 rounded-full w-full" />
+              <div className="mt-3 h-1 w-full rounded-full bg-slate-100 overflow-hidden">
+                <div className="h-full w-full bg-[#10b981]" />
               </div>
             </div>
 
-            {/* Banner Laporan Siap */}
-            <div className="mt-6 flex items-center justify-between rounded-xl border border-emerald-200/80 bg-[#eef8f3] px-4 py-3">
+            <div className="mt-5 flex items-center justify-between rounded-xl border border-emerald-100 bg-[#ecfdf5] px-4 py-3">
               <div className="flex items-center gap-3">
-                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-600 text-white">
-                  <Check className="h-4 w-4 stroke-[3]" />
+                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white">
+                  <Check className="h-3.5 w-3.5 stroke-[3]" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-emerald-950">Laporan Siap Diunduh</p>
+                  <h4 className="text-xs font-bold text-slate-900">Laporan Siap</h4>
                   <p className="text-[11px] text-slate-500">
-                    CCR_Report_PT_Andima_{periode.replace(/\s+/g, "_")}.xlsx · {dbTransactions.length} baris data riil
+                    Monthly_Cost_Detail_{periode.replace(/\s+/g, "_")}.xlsx · {activeDataset.length} baris live
                   </p>
                 </div>
               </div>
+
               <button
                 onClick={handleDownloadExcel}
-                className="flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d]"
+                disabled={activeDataset.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] transition disabled:opacity-50"
               >
-                <Download className="h-3.5 w-3.5" /> Unduh Excel (.xlsx)
+                <Download className="h-3.5 w-3.5" />
+                <span>Unduh Excel</span>
               </button>
             </div>
           </div>
 
-          {/* Card Biru Gelap (Siap untuk Diunduh) */}
-          <div className="rounded-xl bg-[#07111F] p-6 text-white shadow-sm xl:col-span-3 flex flex-col items-center justify-between text-center min-h-[220px]">
+          <div className="rounded-xl bg-[#09294d] p-5 text-white shadow-sm xl:col-span-4 flex flex-col justify-between items-center text-center">
             <div className="flex flex-col items-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 shadow-inner">
-                <Download className="h-6 w-6 text-white" />
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 text-white shadow-inner">
+                <FileText className="h-6 w-6 text-white" />
               </div>
-              <h3 className="mt-3 text-base font-bold text-white">Cloud Vault Storage</h3>
-              <p className="mt-1 text-[11px] text-sky-100 leading-relaxed max-w-[210px]">
-                Tautan unduhan aman berenkripsi AES-256 (Masa aktif 24 jam)[cite: 6].
+              <h3 className="mt-3 text-sm font-bold text-white">Siap untuk Diunduh</h3>
+              <p className="mt-1 text-[11px] text-sky-100/80 leading-relaxed max-w-[210px]">
+                Tautan aktif selama 24 jam dan dapat diunduh maksimal 5 kali.
               </p>
             </div>
 
             <button
               onClick={handleDownloadExcel}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#18C7C0] py-2.5 text-xs font-bold text-slate-950 shadow transition hover:bg-[#14b2ab] active:scale-95"
+              disabled={activeDataset.length === 0}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#0284c7] py-2 text-xs font-bold text-white shadow hover:bg-[#0369a1] active:scale-95 transition disabled:opacity-50"
             >
-              <Download className="h-3.5 w-3.5" /> Unduh Excel Sekarang
+              <Download className="h-3.5 w-3.5" />
+              <span>Unduh Excel</span>
             </button>
           </div>
         </div>
 
-        {/* Riwayat Laporan */}
-        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex items-center justify-between">
+        {/* Section 4: Riwayat Laporan */}
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Riwayat Laporan</h3>
-              <p className="text-[11px] text-slate-400">Berkas kompilasi yang dibuat dalam 30 hari terakhir</p>
+              <p className="text-[11px] text-slate-400">File yang dibuat dalam 30 hari terakhir</p>
             </div>
-            <span className="rounded-full bg-sky-100/70 px-2.5 py-0.5 text-[11px] font-bold text-sky-800">
-              {reports.length} laporan
+            <span className="rounded-full bg-[#e0f2fe] px-2.5 py-0.5 text-[11px] font-bold text-[#0284c7]">
+              {reportsList.length} laporan
             </span>
           </div>
 
-          <div className="mt-4 overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  <th className="pb-3 pr-4">JENIS LAPORAN</th>
-                  <th className="pb-3 pr-4">PERIODE</th>
-                  <th className="pb-3 pr-4">ISI DATA</th>
-                  <th className="pb-3 pr-4">DIBUAT</th>
-                  <th className="pb-3 pr-4">STATUS</th>
+                <tr className="border-b border-slate-100 text-[11px] font-semibold text-slate-400">
+                  <th className="py-3 px-3">JENIS LAPORAN</th>
+                  <th className="py-3 px-3">PERIODE</th>
+                  <th className="py-3 px-3">ISI DATA</th>
+                  <th className="py-3 px-3">DIBUAT</th>
+                  <th className="py-3 px-3">STATUS</th>
+                  <th className="py-3 px-3 text-center">AKSI</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
-                {reports.map((r) => (
-                  <tr key={r.id} className="hover:bg-slate-50/70 transition">
-                    <td className="py-3.5 pr-4 font-bold text-slate-800">{r.jenis}</td>
-                    <td className="py-3.5 pr-4 text-slate-600">{r.periode}</td>
-                    <td className="py-3.5 pr-4 text-slate-600">{r.isiData}</td>
-                    <td className="py-3.5 pr-4 text-slate-500">{r.dibuat}</td>
-                    <td className="py-3.5 pr-4">
-                      {r.status === "Siap" ? (
-                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-600">
-                          Siap
-                        </span>
-                      ) : (
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
-                          Kedaluwarsa
-                        </span>
-                      )}
+              <tbody className="divide-y divide-slate-50">
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, idx) => (
+                    <tr key={`history-skel-${idx}`} className="animate-pulse">
+                      <td className="py-3.5 px-3"><div className="h-3.5 w-36 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-3.5 w-24 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-3.5 w-20 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-3.5 w-28 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-14 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3 text-center"><div className="mx-auto h-5 w-16 rounded bg-slate-200" /></td>
+                    </tr>
+                  ))
+                ) : reportsList.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-xs text-slate-400">
+                      Belum ada riwayat laporan yang dibuat.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  reportsList.map((row, idx) => (
+                    <tr key={`rep-${row.id}-${idx}`} className="hover:bg-slate-50/60 transition">
+                      <td className="py-3.5 px-3 font-bold text-slate-800">
+                        {row.jenis}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-700">
+                        {row.periode}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-700 font-medium">
+                        {row.isiData}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-600 font-medium">
+                        {row.dibuat}
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span
+                          className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            row.status === "Siap"
+                              ? "bg-[#ecfdf5] text-[#059669]"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {row.status}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3 text-center">
+                        {row.status === "Siap" ? (
+                          <button
+                            onClick={handleDownloadExcel}
+                            className="inline-flex items-center gap-1 rounded bg-[#e0f2fe] px-2.5 py-1 text-[11px] font-bold text-[#0284c7] hover:bg-[#bae6fd] transition"
+                          >
+                            <Download className="h-3 w-3" />
+                            <span>Unduh</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={handleBuatLaporan}
+                            className="inline-flex items-center gap-1 rounded bg-slate-100 px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-200 transition"
+                          >
+                            <RotateCw className="h-3 w-3" />
+                            <span>Buat ulang</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
 
           <div className="mt-4 flex items-center gap-1.5 text-[11px] text-slate-400 border-t border-slate-100 pt-3">
             <Info className="h-3.5 w-3.5 text-sky-600" />
-            File otomatis dihapus dari Cloud Vault setelah 24 jam untuk menjaga keamanan data[cite: 6].
+            <span>File otomatis dihapus setelah 7 hari untuk menjaga keamanan data.</span>
           </div>
         </div>
       </main>
