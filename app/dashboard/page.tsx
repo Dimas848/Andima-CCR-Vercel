@@ -19,9 +19,9 @@ import {
   AlertCircle,
   FileText,
   ArrowRight,
+  ShieldAlert,
 } from "lucide-react";
 
-// Penulisan impor file sidebar menggunakan huruf kecil sesuai permintaan
 import Sidebar from "@/components/sidebar";
 import BudgetChart from "./BudgetChart";
 import CustomerBreakdown from "./CustomerBreakdown";
@@ -78,6 +78,20 @@ const formatCompactRupiah = (val: number) => {
   return `Rp ${val.toLocaleString("id-ID")}`;
 };
 
+// Helper Parser JSON Array untuk exception_tags dari Supabase
+const parseTags = (raw: any): string[] => {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+};
+
 // =========================================================================
 // SUB-KOMPONEN: SKELETON LOADERS
 // =========================================================================
@@ -118,7 +132,7 @@ function SectionSkeletonCard({ height = "h-72" }: { height?: string }) {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (100% DINAMIS DARI DATABASE)
+// SUB-KOMPONEN: NOTIFICATION POPOVER (SINKRON DENGAN PRIORITY EXCEPTION)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -138,7 +152,7 @@ function NotificationPopover({
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
   const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
-  // Kalkulasi Murni dari Data Transaksi Database
+  // Kalkulasi Murni dari Database (Sinkron dengan Kategori Anomali)
   const notifData = useMemo(() => {
     let overBudget = 0;
     let overBudgetSum = 0;
@@ -146,14 +160,19 @@ function NotificationPopover({
     let highCostSum = 0;
     let missingEvidence = 0;
     let missingEvidenceSum = 0;
+    let unmatched = 0;
+    let unmatchedSum = 0;
 
     transactions.forEach((t) => {
       const actual = Number(t.actual_cost) || 0;
-      if (t.variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
+      const planned = Number(t.planned_cost) || 0;
+      const variance = Number(t.variance) || (actual - planned);
+
+      if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
         overBudget++;
         overBudgetSum += actual;
       }
-      if (actual >= 50_000_000) {
+      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
         highCost++;
         highCostSum += actual;
       }
@@ -161,9 +180,15 @@ function NotificationPopover({
         missingEvidence++;
         missingEvidenceSum += actual;
       }
+      if (!t.is_job_matched || t.job_number === "UNMATCHED" || t.exception_tags?.includes("JOB_NOT_FOUND") || t.exception_tags?.includes("DUPLICATE_DATA")) {
+        unmatched++;
+        unmatchedSum += actual;
+      }
     });
 
-    const total = overBudget + highCost + missingEvidence;
+    const total = transactions.filter(
+      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
+    ).length;
 
     return {
       totalExceptions: total,
@@ -173,6 +198,8 @@ function NotificationPopover({
       highCostValue: formatCompactRupiah(highCostSum),
       missingEvidenceCount: missingEvidence,
       missingEvidenceValue: formatCompactRupiah(missingEvidenceSum),
+      unmatchedCount: unmatched,
+      unmatchedValue: formatCompactRupiah(unmatchedSum),
     };
   }, [transactions]);
 
@@ -318,6 +345,32 @@ function NotificationPopover({
                   </span>
                 </div>
               </div>
+
+              {/* Item 4: Unmatched CRM */}
+              {notifData.unmatchedCount > 0 && (
+                <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
+                    <ShieldAlert className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-slate-900">Unmatched CRM</h3>
+                      <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-700">
+                        {notifData.unmatchedCount} item
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-bold text-slate-900">
+                      {notifData.unmatchedValue}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                      Nomor pekerjaan tidak ditemukan di master database CRM.
+                    </p>
+                    <span className="mt-2 block text-[11px] font-bold text-purple-600">
+                      Verifikasi Job Number
+                    </span>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -345,29 +398,25 @@ function NotificationPopover({
 export default function DashboardPage() {
   const router = useRouter();
 
-  // Periode Real-Time
   const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
 
-  // State Data & Loading
   const [allTransactions, setAllTransactions] = useState<CostTransaction[]>([]);
   const [filteredTransactions, setFilteredTransactions] = useState<CostTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // State Popover Notifikasi
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
 
-  // State Filter Dropdown Dinamis
+  // Filter States: Diselaraskan dengan 7 Atribut FR-001 (Periode Bulan, Customer, Cabang Operasional)
   const [periode, setPeriode] = useState<string>("ALL");
-  const [entitas, setEntitas] = useState("ALL");
-  const [region, setRegion] = useState("ALL");
+  const [customer, setCustomer] = useState<string>("ALL");
+  const [cabang, setCabang] = useState<string>("ALL");
   const [isFiltering, setIsFiltering] = useState(false);
 
   // State Ekspor
   const [exportState, setExportState] = useState<"idle" | "queueing" | "ready">("idle");
   const [exportJobId, setExportJobId] = useState<string | null>(null);
 
-  // Opsi Periode Dinamis
   const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => [
     { value: "ALL", label: "Semua Periode" },
     { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
@@ -404,7 +453,7 @@ export default function DashboardPage() {
           evidence_url: item.evidence_url || null,
           reconciliation_result: item.reconciliation_result || "MATCH",
           review_flag: Boolean(item.review_flag),
-          exception_tags: Array.isArray(item.exception_tags) ? item.exception_tags : [],
+          exception_tags: parseTags(item.exception_tags),
           voucher_no: item.voucher_no || "-",
           description: item.description || "",
           is_job_matched: Boolean(item.is_job_matched),
@@ -430,18 +479,18 @@ export default function DashboardPage() {
     fetchSupabaseData();
   }, [fetchSupabaseData]);
 
-  // 2. Dropdown Entitas Dinamis Murni dari Database
-  const dynamicEntitasOptions: DropdownOption[] = useMemo(() => {
+  // 2. Dropdown Customer Dinamis (Menggantikan istilah Entitas sesuai QA)
+  const dynamicCustomerOptions: DropdownOption[] = useMemo(() => {
     const unique = Array.from(new Set(allTransactions.map((t) => t.customer_name))).filter(Boolean);
-    const options: DropdownOption[] = [{ value: "ALL", label: "Semua Entitas" }];
+    const options: DropdownOption[] = [{ value: "ALL", label: "Semua Customer" }];
     unique.forEach((c) => options.push({ value: c, label: c }));
     return options;
   }, [allTransactions]);
 
-  // 3. Dropdown Region Dinamis Murni dari Database
-  const dynamicRegionOptions: DropdownOption[] = useMemo(() => {
+  // 3. Dropdown Cabang Operasional Dinamis (Menggantikan istilah Region sesuai QA)
+  const dynamicCabangOptions: DropdownOption[] = useMemo(() => {
     const unique = Array.from(new Set(allTransactions.map((t) => t.branch_code))).filter(Boolean);
-    const options: DropdownOption[] = [{ value: "ALL", label: "Nasional" }];
+    const options: DropdownOption[] = [{ value: "ALL", label: "Semua Cabang" }];
     unique.forEach((r) => options.push({ value: r, label: r }));
     return options;
   }, [allTransactions]);
@@ -454,18 +503,18 @@ export default function DashboardPage() {
       if (periode !== "ALL") {
         filtered = filtered.filter((t) => t.period_month === periode);
       }
-      if (entitas !== "ALL") {
-        filtered = filtered.filter((t) => t.customer_name === entitas);
+      if (customer !== "ALL") {
+        filtered = filtered.filter((t) => t.customer_name === customer);
       }
-      if (region !== "ALL") {
-        filtered = filtered.filter((t) => t.branch_code === region);
+      if (cabang !== "ALL") {
+        filtered = filtered.filter((t) => t.branch_code === cabang);
       }
       setFilteredTransactions(filtered);
       setIsFiltering(false);
     }, 250);
   };
 
-  // 5. Kalkulasi KPI Murni (Tanpa Data Tiruan Sama Sekali)
+  // 5. Kalkulasi KPI Murni (Sinkron 100% dengan Priority Exception)
   const kpiData = useMemo(() => {
     const totalActual = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.actual_cost) || 0), 0);
     const totalPlanned = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.planned_cost) || 0), 0);
@@ -476,7 +525,12 @@ export default function DashboardPage() {
 
     const verifiedCount = filteredTransactions.filter((t) => t.has_evidence).length;
     const totalCustomerCount = new Set(filteredTransactions.map((t) => t.customer_name).filter(Boolean)).size;
-    const attentionCount = filteredTransactions.filter((t) => t.review_flag || t.variance > 0 || !t.has_evidence).length;
+
+    // Perhitungan anomali memasukkan is_job_matched agar identik dengan Priority Exception
+    const attentionTransactions = filteredTransactions.filter(
+      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
+    );
+    const attentionCustomerCount = new Set(attentionTransactions.map((t) => t.customer_name).filter(Boolean)).size;
 
     return {
       totalActualDisplay: formatCompactRupiah(totalActual),
@@ -487,7 +541,7 @@ export default function DashboardPage() {
       realisasiPercent: `${realisasiPercentVal}%`,
       verifiedCountText: `${verifiedCount.toLocaleString("id-ID")} transaksi terverifikasi`,
       totalCustomer: `${totalCustomerCount}`,
-      attentionCustomerText: `${attentionCount} customer perlu perhatian`,
+      attentionCustomerText: `${attentionCustomerCount} customer perlu perhatian`,
     };
   }, [filteredTransactions]);
 
@@ -629,7 +683,7 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Filter Bar: Periode, Entitas, Region, Terapkan Filter */}
+        {/* Filter Bar: Periode, Customer, Cabang Operasional (Label Sesuai QA & FR-001) */}
         <div className="mt-5 flex flex-wrap items-end gap-3">
           <div className="w-52">
             <CustomDropdown
@@ -642,19 +696,19 @@ export default function DashboardPage() {
 
           <div className="w-64">
             <CustomDropdown
-              label="Entitas"
-              value={entitas}
-              options={dynamicEntitasOptions}
-              onChange={setEntitas}
+              label="Customer"
+              value={customer}
+              options={dynamicCustomerOptions}
+              onChange={setCustomer}
             />
           </div>
 
           <div className="w-56">
             <CustomDropdown
-              label="Region"
-              value={region}
-              options={dynamicRegionOptions}
-              onChange={setRegion}
+              label="Cabang Operasional"
+              value={cabang}
+              options={dynamicCabangOptions}
+              onChange={setCabang}
             />
           </div>
 

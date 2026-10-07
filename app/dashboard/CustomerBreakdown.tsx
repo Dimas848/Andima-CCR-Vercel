@@ -18,55 +18,72 @@ interface CustomerBreakdownProps {
 }
 
 export default function CustomerBreakdown({ transactions = [] }: CustomerBreakdownProps) {
-  // Nilai default persis sesuai tangkapan layar
+  // Nilai cadangan jika tabel Supabase belum terisi
   const defaultCustomers: Customer[] = [
-    { name: "PT Nusantara Retail", value: "Rp 324,8 jt", delta: "+8,4%", tone: "danger", width: "100%", barClass: "bg-[#d4194f]" },
-    { name: "PT Sinar Logistik", value: "Rp 271,5 jt", delta: "-2,1%", tone: "success", width: "83%", barClass: "bg-[#0a7ebf]" },
-    { name: "CV Maju Bersama", value: "Rp 198,2 jt", delta: "+4,7%", tone: "warning", width: "61%", barClass: "bg-[#0a7ebf]" },
-    { name: "PT Garuda Teknologi", value: "Rp 158,7 jt", delta: "-1,6%", tone: "success", width: "49%", barClass: "bg-[#0a7ebf]" },
+    { name: "PT Nusantara Retail", value: "Rp 324,8 jt", delta: "41,2%", tone: "info", width: "100%", barClass: "bg-[#0a7ebf]" },
+    { name: "PT Sinar Logistik", value: "Rp 271,5 jt", delta: "26,5%", tone: "info", width: "83%", barClass: "bg-[#0a7ebf]" },
+    { name: "CV Maju Bersama", value: "Rp 198,2 jt", delta: "18,4%", tone: "info", width: "61%", barClass: "bg-[#0a7ebf]" },
+    { name: "PT Garuda Teknologi", value: "Rp 158,7 jt", delta: "13,9%", tone: "info", width: "49%", barClass: "bg-[#0a7ebf]" },
   ];
 
-  // Hitung dinamis dari transaksi live jika data tersedia
+  // Hitung dinamis kontribusi per customer dari database Supabase
   const customers = useMemo(() => {
     if (!transactions.length) return defaultCustomers;
+
+    const grandTotalActual = transactions.reduce((acc, t) => acc + (Number(t.actual_cost) || 0), 0);
 
     const map = new Map<string, { actual: number; planned: number }>();
     transactions.forEach((t) => {
       const name = t.customer_name || "Unknown Customer";
       const current = map.get(name) || { actual: 0, planned: 0 };
       map.set(name, {
-        actual: current.actual + (t.actual_cost || 0),
-        planned: current.planned + (t.planned_cost || 0),
+        actual: current.actual + (Number(t.actual_cost) || 0),
+        planned: current.planned + (Number(t.planned_cost) || 0),
       });
     });
 
     const list = Array.from(map.entries()).map(([name, val]) => {
+      // 1. Hitung kontribusi terhadap total biaya perusahaan (%)
+      const sharePct = grandTotalActual > 0 ? (val.actual / grandTotalActual) * 100 : 0;
+
+      // 2. Cek apakah ada over budget pada customer ini
       const variance = val.actual - val.planned;
-      const pct = val.planned > 0 ? (variance / val.planned) * 100 : 0;
-      const deltaSign = pct > 0 ? `+${pct.toFixed(1).replace(".", ",")}%` : `${pct.toFixed(1).replace(".", ",")}%`;
-      const tone: Tone = pct > 0 ? "danger" : "success";
+      const isOverBudget = variance > 0;
+
+      // Format tampilan badge kontribusi
+      const badgeText = `${sharePct.toFixed(1).replace(".", ",")}%`;
+      const tone: Tone = isOverBudget ? "danger" : "info";
 
       let formattedValue = `Rp ${val.actual.toLocaleString("id-ID")}`;
-      if (Math.abs(val.actual) >= 1_000_000) {
-        formattedValue = `Rp ${(val.actual / 1_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} jt`;
+      if (Math.abs(val.actual) >= 1_000_000_000) {
+        formattedValue = `Rp ${(val.actual / 1_000_000_000).toLocaleString("id-ID", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 2,
+        })} M`;
+      } else if (Math.abs(val.actual) >= 1_000_000) {
+        formattedValue = `Rp ${(val.actual / 1_000_000).toLocaleString("id-ID", {
+          minimumFractionDigits: 1,
+          maximumFractionDigits: 1,
+        })} jt`;
       }
 
       return {
         name,
         actual: val.actual,
         value: formattedValue,
-        delta: deltaSign,
+        delta: badgeText,
         tone,
-        barClass: pct > 0 ? "bg-[#d4194f]" : "bg-[#0a7ebf]",
+        barClass: isOverBudget ? "bg-[#d4194f]" : "bg-[#0a7ebf]",
       };
     });
 
+    // Urutkan customer dari nilai realisasi terbesar
     list.sort((a, b) => b.actual - a.actual);
     const maxVal = list[0]?.actual || 1;
 
     return list.slice(0, 4).map((item) => ({
       ...item,
-      width: `${Math.max(20, Math.round((item.actual / maxVal) * 100))}%`,
+      width: `${Math.max(15, Math.round((item.actual / maxVal) * 100))}%`,
     }));
   }, [transactions]);
 

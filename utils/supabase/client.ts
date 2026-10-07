@@ -1,10 +1,7 @@
-import { createBrowserClient } from "@supabase/ssr";
+// utils/supabase/client.ts
+import { supabase } from "@/lib/supabase";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-export const createClient = () =>
-  createBrowserClient(
-    supabaseUrl!,
-    supabaseKey!,
-  );
+// Kembalikan objek yang sama persis agar tidak membuat instance baru
+export function createClient() {
+  return supabase;
+}
