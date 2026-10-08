@@ -263,18 +263,22 @@ export default function CostExceptionPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Filter States
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState<string>("Semua Tipe");
   const [selectedStatus, setSelectedStatus] = useState<string>("Semua Status");
   const [isSlaFilterActive, setIsSlaFilterActive] = useState<boolean>(false);
 
+  // State Notifikasi
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isNotifMarkedRead, setIsNotifMarkedRead] = useState<boolean>(false);
 
+  // State Rule Modal
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
   const [ruleBudgetVariance, setRuleBudgetVariance] = useState<string>("5");
   const [ruleHighCostLimit, setRuleHighCostLimit] = useState<string>("50000000");
 
+  // State Review Item Terpilih (Modal Klik Baris)
   const [activeReviewItem, setActiveReviewItem] = useState<ExceptionItem | null>(null);
   const [newStatus, setNewStatus] = useState<ExceptionStatus>("Ditinjau");
   const [reviewNotes, setReviewNotes] = useState("");
@@ -306,7 +310,7 @@ export default function CostExceptionPage() {
         return;
       }
 
-      // Ambil daftar ID transaksi yang secara manual diselesaikan oleh pengguna
+      // Ambil ID yang hanya benar-benar diselesaikan oleh pengguna
       let resolvedIds: string[] = [];
       if (typeof window !== "undefined") {
         try {
@@ -320,7 +324,7 @@ export default function CostExceptionPage() {
         let prio: ExceptionPriority = "High";
         const actual = Number(item.actual_cost || 0);
 
-        // Klasifikasi 28 item: Tepat 3 Critical (UNMATCHED), 10 High (Missing Evidence), 15 High (Over Budget)
+        // Klasifikasi 28 item: 3 Critical (UNMATCHED), 10 High (Missing Evidence), 15 High (Over Budget)
         if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
           tag = "Duplicate Data";
           prio = "Critical";
@@ -332,8 +336,13 @@ export default function CostExceptionPage() {
           prio = "High";
         }
 
-        // HANYA status Selesai jika benar-benar diselesaikan oleh pengguna lewat tombol Simpan Status
-        const isUserResolved = resolvedIds.includes(item.id);
+        // HANYA berstatus Selesai jika secara sadar diselesaikan oleh user
+        const isUserResolved =
+          resolvedIds.includes(item.id) ||
+          resolvedIds.includes(String(item.id)) ||
+          item.status === "Selesai" ||
+          item.reconciliation_result === "RESOLVED";
+
         const stat: ExceptionStatus = isUserResolved ? "Selesai" : "Terbuka";
 
         const generatedId =
@@ -349,7 +358,7 @@ export default function CostExceptionPage() {
           tipeMasalah: tag,
           prioritas: prio,
           status: stat,
-          slaExceeded: stat !== "Selesai",
+          slaExceeded: prio === "Critical" && stat !== "Selesai",
           resolutionNotes: item.description || "",
         };
       });
@@ -378,6 +387,7 @@ export default function CostExceptionPage() {
     }, 100);
   };
 
+  // Handler "Tinjau Sekarang" pada Banner SLA (Menyaring ke Transaksi Kritis SLA)
   const handleTinjauSla = () => {
     setIsSlaFilterActive((prev) => !prev);
     setSelectedTag("Semua Tipe");
@@ -400,7 +410,7 @@ export default function CostExceptionPage() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Simpan Status Resolusi ke Supabase & Local Cache
+  // Simpan Status Resolusi ke Supabase & Local Cache (Sinkron 100%)
   const handleSaveReviewStatus = async () => {
     if (!activeReviewItem) return;
 
@@ -447,7 +457,7 @@ export default function CostExceptionPage() {
           .eq("id", activeReviewItem.dbId);
       } catch (e) {}
 
-      // 3. Update state di tampilan secara instan
+      // 3. Update state di tampilan seketika
       setData((prev) =>
         prev.map((item) =>
           item.dbId === activeReviewItem.dbId
@@ -480,7 +490,8 @@ export default function CostExceptionPage() {
     const slaCount = activeData.length;
     const slaNominal = activeData.reduce((acc, curr) => acc + curr.nominal, 0);
 
-    const criticalCount = activeData.filter((d) => d.prioritas === "Critical").length;
+    const criticalItems = activeData.filter((d) => d.prioritas === "Critical");
+    const criticalCount = criticalItems.length;
     const highCount = activeData.filter((d) => d.prioritas === "High").length;
 
     return {
@@ -549,9 +560,25 @@ export default function CostExceptionPage() {
       });
     }
 
+    const highCost = activeData.filter((d) => d.tipeMasalah === "High Cost");
+    if (highCost.length > 0) {
+      categories.push({
+        tag: "High Cost",
+        count: highCost.length,
+        nominal: highCost.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
+        subNote: "Perlu peninjauan biaya",
+        icon: AlertCircle,
+        bgColor: "bg-rose-50",
+        textColor: "text-[#e11d48]",
+        badgeBg: "bg-rose-50",
+      });
+    }
+
     return categories;
   }, [data]);
 
+  // Filter Bar Dinamis (Saat Tinjau Sekarang ditekan, tabel memfilter langsung ke 3 transaksi Kritis)
   const filteredData = useMemo(() => {
     return data.filter((item) => {
       const matchSearch =
@@ -561,7 +588,9 @@ export default function CostExceptionPage() {
 
       const matchTag = selectedTag === "Semua Tipe" || item.tipeMasalah === selectedTag;
       const matchStatus = selectedStatus === "Semua Status" || item.status === selectedStatus;
-      const matchSla = !isSlaFilterActive || item.status !== "Selesai";
+      
+      // Saat filter SLA aktif, tabel menyaring langsung ke transaksi yang berprioritas Kritis
+      const matchSla = !isSlaFilterActive || (item.prioritas === "Critical" && item.status !== "Selesai");
 
       return matchSearch && matchTag && matchStatus && matchSla;
     });
@@ -660,119 +689,192 @@ export default function CostExceptionPage() {
           </div>
         )}
 
-        {/* 4 Kartu KPI Makro */}
+        {/* 4 Kartu KPI Makro (Dengan Skeleton Loading) */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <span className="text-[11px] font-bold tracking-wider text-slate-400">TOTAL EXCEPTION</span>
-            <div className="mt-2 flex items-center gap-2">
-              <h2 className="text-2xl font-bold text-slate-900">{metrics.total}</h2>
-              {metrics.criticalCount > 0 && (
-                <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-[#ffe4e6] text-[#e11d48]">
-                  +{metrics.criticalCount}
-                </span>
-              )}
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">{metrics.criticalCount} transaksi berisiko tinggi</p>
-          </div>
+          {isLoading ? (
+            Array.from({ length: 4 }).map((_, idx) => (
+              <div key={idx} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
+                <div className="flex items-start justify-between">
+                  <div className="h-3 w-24 rounded bg-slate-200" />
+                  <div className="h-7 w-7 rounded-lg bg-slate-200" />
+                </div>
+                <div className="mt-3 h-7 w-16 rounded bg-slate-200" />
+                <div className="mt-2 h-3 w-32 rounded bg-slate-100" />
+              </div>
+            ))
+          ) : (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <span className="text-[11px] font-bold tracking-wider text-slate-400">TOTAL EXCEPTION</span>
+                <div className="mt-2 flex items-center gap-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.total}</h2>
+                  {metrics.criticalCount > 0 && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-[#ffe4e6] text-[#e11d48]">
+                      +{metrics.criticalCount}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">{metrics.criticalCount} transaksi berisiko tinggi</p>
+              </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <span className="text-[11px] font-bold tracking-wider text-slate-400">OVER BUDGET</span>
-            <div className="mt-2">
-              <h2 className="text-2xl font-bold text-slate-900">{metrics.overBudgetCount}</h2>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">Total {formatCompactRupiah(metrics.overBudgetNominal)}</p>
-          </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <span className="text-[11px] font-bold tracking-wider text-slate-400">OVER BUDGET</span>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.overBudgetCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">Total {formatCompactRupiah(metrics.overBudgetNominal)}</p>
+              </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <span className="text-[11px] font-bold tracking-wider text-slate-400">HIGH COST</span>
-            <div className="mt-2">
-              <h2 className="text-2xl font-bold text-slate-900">{metrics.highCostCount}</h2>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">Di atas threshold rule</p>
-          </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <span className="text-[11px] font-bold tracking-wider text-slate-400">HIGH COST</span>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.highCostCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">Di atas threshold rule</p>
+              </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <span className="text-[11px] font-bold tracking-wider text-slate-400">DATA QUALITY</span>
-            <div className="mt-2">
-              <h2 className="text-2xl font-bold text-slate-900">{metrics.dataQualityCount}</h2>
-            </div>
-            <p className="mt-2 text-[11px] text-slate-400">
-              {metrics.missingEvidenceCount} evidence · {metrics.duplicateCount} duplikasi
-            </p>
-          </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <span className="text-[11px] font-bold tracking-wider text-slate-400">DATA QUALITY</span>
+                <div className="mt-2">
+                  <h2 className="text-2xl font-bold text-slate-900">{metrics.dataQualityCount}</h2>
+                </div>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  {metrics.missingEvidenceCount} evidence · {metrics.duplicateCount} duplikasi
+                </p>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* SLA Banner & Distribusi Prioritas (Critical: 3, High: 25) */}
+        {/* SLA Banner & Distribusi Prioritas (Dengan Skeleton Loading) */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.65fr_1fr]">
-          {metrics.slaCount > 0 ? (
-            <div className="flex items-center justify-between rounded-xl border border-[#fecdd3] bg-[#fff1f2] p-5 shadow-sm">
-              <div className="flex items-center gap-3.5">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#e11d48] text-white shadow-sm">
-                  <AlertTriangle className="h-5 w-5 stroke-[2.5]" />
+          {isLoading ? (
+            <>
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse flex items-center justify-between">
+                <div className="flex items-center gap-3.5">
+                  <div className="h-11 w-11 rounded-full bg-slate-200" />
+                  <div className="space-y-2">
+                    <div className="h-4 w-48 rounded bg-slate-200" />
+                    <div className="h-3 w-64 rounded bg-slate-100" />
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-bold text-[#9f1239]">
-                    {metrics.slaCount} exception kritis melewati SLA 24 jam
-                  </h3>
-                  <p className="mt-0.5 text-xs text-[#be123c]">
-                    Nilai terdampak {formatCompactRupiah(metrics.slaNominal)}. Segera lakukan review agar proses closing tidak tertunda.
-                  </p>
+                <div className="h-8 w-28 rounded-lg bg-slate-200" />
+              </div>
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse">
+                <div className="h-4 w-32 rounded bg-slate-200" />
+                <div className="mt-4 flex justify-between">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="flex flex-col items-center gap-2">
+                      <div className="h-4 w-12 rounded-full bg-slate-200" />
+                      <div className="h-6 w-6 rounded bg-slate-200" />
+                    </div>
+                  ))}
                 </div>
               </div>
-
-              <button
-                onClick={handleTinjauSla}
-                className="rounded-lg bg-[#e11d48] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#be123c] active:scale-95 cursor-pointer shrink-0 ml-3"
-              >
-                {isSlaFilterActive ? "Tampilkan Semua" : "Tinjau Sekarang"}
-              </button>
-            </div>
+            </>
           ) : (
-            <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm">
-              <div className="flex items-center gap-3.5">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm">
-                  <CheckCircle2 className="h-5 w-5 stroke-[2.5]" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-emerald-900">
-                    Semua status exception telah diselesaikan
-                  </h3>
-                  <p className="mt-0.5 text-xs text-emerald-700">
-                    Tidak ada transaksi yang melebihi batas waktu SLA 24 jam.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
+            <>
+              {/* Banner SLA dengan Tombol Tinjau Sekarang */}
+              {metrics.slaCount > 0 ? (
+                <div className="flex items-center justify-between rounded-xl border border-[#fecdd3] bg-[#fff1f2] p-5 shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#e11d48] text-white shadow-sm">
+                      <AlertTriangle className="h-5 w-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-[#9f1239]">
+                        {metrics.slaCount} exception kritis melewati SLA 24 jam
+                      </h3>
+                      <p className="mt-0.5 text-xs text-[#be123c]">
+                        Nilai terdampak {formatCompactRupiah(metrics.slaNominal)}. Segera lakukan review agar proses closing tidak tertunda.
+                      </p>
+                    </div>
+                  </div>
 
-          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800">Distribusi Prioritas</h3>
-            <div className="mt-3 flex items-center justify-between">
-              <div className="flex flex-col items-center">
-                <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">Critical</span>
-                <span className="mt-2 text-xl font-bold text-slate-900">{metrics.criticalCount}</span>
+                  <button
+                    onClick={handleTinjauSla}
+                    className="rounded-lg bg-[#e11d48] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#be123c] active:scale-95 cursor-pointer shrink-0 ml-3"
+                  >
+                    {isSlaFilterActive ? "Tampilkan Semua" : "Tinjau Sekarang"}
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 p-5 shadow-sm">
+                  <div className="flex items-center gap-3.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm">
+                      <CheckCircle2 className="h-5 w-5 stroke-[2.5]" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-900">
+                        Semua status exception telah diselesaikan
+                      </h3>
+                      <p className="mt-0.5 text-xs text-emerald-700">
+                        Tidak ada transaksi yang melebihi batas waktu SLA 24 jam.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Distribusi Prioritas (Critical: 3, High: 25) */}
+              <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h3 className="text-sm font-bold text-slate-800">Distribusi Prioritas</h3>
+                <div className="mt-3 flex items-center justify-between">
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">Critical</span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.criticalCount}</span>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">High</span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.highCount}</span>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#fef3c7] px-2.5 py-0.5 text-[10px] font-bold text-[#d97706]">Medium</span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.mediumCount}</span>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="rounded-full bg-[#f1f5f9] px-2.5 py-0.5 text-[10px] font-bold text-[#64748b]">Low</span>
+                    <span className="mt-2 text-xl font-bold text-slate-900">{metrics.lowCount}</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-col items-center">
-                <span className="rounded-full bg-[#ffe4e6] px-2.5 py-0.5 text-[10px] font-bold text-[#e11d48]">High</span>
-                <span className="mt-2 text-xl font-bold text-slate-900">{metrics.highCount}</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="rounded-full bg-[#fef3c7] px-2.5 py-0.5 text-[10px] font-bold text-[#d97706]">Medium</span>
-                <span className="mt-2 text-xl font-bold text-slate-900">{metrics.mediumCount}</span>
-              </div>
-              <div className="flex flex-col items-center">
-                <span className="rounded-full bg-[#f1f5f9] px-2.5 py-0.5 text-[10px] font-bold text-[#64748b]">Low</span>
-                <span className="mt-2 text-xl font-bold text-slate-900">{metrics.lowCount}</span>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
 
         {/* Tabel Daftar Exception */}
         <div id="daftar-exception-table" className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
-              <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
+
+                {/* Chip Filter Tipe Masalah */}
+                {selectedTag !== "Semua Tipe" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-2.5 py-0.5 text-[10px] font-bold text-[#0a7ebf]">
+                    <span>Filter: {selectedTag}</span>
+                    <button
+                      onClick={() => setSelectedTag("Semua Tipe")}
+                      className="hover:text-[#08689d] font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+
+                {/* Chip Filter SLA (Aktif saat Tinjau Sekarang ditekan) */}
+                {isSlaFilterActive && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-[10px] font-bold text-rose-700">
+                    <span>SLA Kritis ({filteredData.length} item)</span>
+                    <button
+                      onClick={() => setIsSlaFilterActive(false)}
+                      className="hover:text-rose-950 font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-slate-400">Klik baris untuk meninjau dan menyelesaikan anomali</p>
             </div>
 
@@ -836,72 +938,103 @@ export default function CostExceptionPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {paginatedData.map((row) => (
-                  <tr
-                    key={row.dbId}
-                    onClick={() => {
-                      setActiveReviewItem(row);
-                      setNewStatus(row.status);
-                      setReviewNotes(row.resolutionNotes || "");
-                    }}
-                    className="hover:bg-slate-50 transition cursor-pointer"
-                  >
-                    <td className="py-3.5 px-3 font-mono font-medium text-slate-500">{row.id}</td>
-                    <td className="py-3.5 px-3">
-                      <p className="font-bold text-slate-900">{row.customer}</p>
-                      <p className="font-mono text-[11px] text-slate-400">{row.jobNumber}</p>
-                    </td>
-                    <td className="py-3.5 px-3 font-medium text-slate-900">{formatRupiah(row.nominal)}</td>
-                    <td className="py-3.5 px-3">
-                      <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getTagPillClass(row.tipeMasalah)}`}>
-                        {row.tipeMasalah}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-3">
-                      <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getPriorityPillClass(row.prioritas)}`}>
-                        {row.prioritas}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-3">
-                      <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getStatusPillClass(row.status)}`}>
-                        {row.status}
-                      </span>
+                {isLoading ? (
+                  Array.from({ length: 6 }).map((_, idx) => (
+                    <tr key={idx} className="animate-pulse">
+                      <td className="py-3.5 px-3"><div className="h-4 w-16 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-36 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-24 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-20 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
+                    </tr>
+                  ))
+                ) : paginatedData.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
+                      {isSlaFilterActive
+                        ? "Tidak ada data exception kritis yang melebihi batas waktu SLA 24 jam."
+                        : "Tidak ada data exception yang cocok dengan kriteria filter."}
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  paginatedData.map((row) => (
+                    <tr
+                      key={row.dbId}
+                      onClick={() => {
+                        setActiveReviewItem(row);
+                        setNewStatus(row.status);
+                        setReviewNotes(row.resolutionNotes || "");
+                      }}
+                      className="hover:bg-slate-50 transition cursor-pointer"
+                    >
+                      <td className="py-3.5 px-3 font-mono font-medium text-slate-500">{row.id}</td>
+                      <td className="py-3.5 px-3">
+                        <p className="font-bold text-slate-900">{row.customer}</p>
+                        <p className="font-mono text-[11px] text-slate-400">{row.jobNumber}</p>
+                      </td>
+                      <td className="py-3.5 px-3 font-medium text-slate-900">{formatRupiah(row.nominal)}</td>
+                      <td className="py-3.5 px-3">
+                        <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getTagPillClass(row.tipeMasalah)}`}>
+                          {row.tipeMasalah}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getPriorityPillClass(row.prioritas)}`}>
+                          {row.prioritas}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-3">
+                        <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold ${getStatusPillClass(row.status)}`}>
+                          {row.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
 
+          {/* Footer Pagination (Dengan Skeleton Loading) */}
           <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
-            <p className="text-xs text-slate-400">
-              Menampilkan {totalItems > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–
-              {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
-            </p>
+            {isLoading ? (
+              <>
+                <div className="h-3 w-44 rounded bg-slate-200 animate-pulse" />
+                <div className="h-6 w-32 rounded-full bg-slate-200 animate-pulse" />
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-slate-400">
+                  Menampilkan {totalItems > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}–
+                  {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
+                </p>
 
-            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
-              {currentPage > 1 && (
-                <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer">
-                  <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
-                </button>
-              )}
-              {visiblePages.map((num) => (
-                <button
-                  key={num}
-                  onClick={() => setCurrentPage(num)}
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
-                    currentPage === num ? "bg-[#0a7ebf] text-white font-bold" : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  {num}
-                </button>
-              ))}
-              {currentPage < totalPages && (
-                <button onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))} className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer">
-                  <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
-                </button>
-              )}
-            </div>
+                <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
+                  {currentPage > 1 && (
+                    <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer">
+                      <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                    </button>
+                  )}
+                  {visiblePages.map((num) => (
+                    <button
+                      key={num}
+                      onClick={() => setCurrentPage(num)}
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
+                        currentPage === num ? "bg-[#0a7ebf] text-white font-bold" : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                  {currentPage < totalPages && (
+                    <button onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))} className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer">
+                      <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
