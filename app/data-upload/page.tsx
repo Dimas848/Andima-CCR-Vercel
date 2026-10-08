@@ -33,14 +33,14 @@ import { supabase } from "@/lib/supabase";
 export interface TransactionRecord {
   id: string;
   recordId: string;
-  voucherNo: string;        // Atribut 1: Nomor / Tautan Bukti Transaksi
-  periodMonth: string;      // Atribut 2: Periode Bulan
-  branchCode: string;       // Atribut 3: Cabang Operasional
-  customerName: string;     // Atribut 4: Nama Customer
-  jobNumber: string;        // Atribut 5: Nomor Pekerjaan (Job Number)
-  category: string;         // Atribut 6: Kategori Biaya
-  amount: number;           // Atribut 7: Nominal Biaya
-  hasEvidence: boolean;     // Kelengkapan Bukti Fisik
+  voucherNo: string;         // Atribut 1: Nomor / Tautan Bukti Transaksi
+  periodMonth: string;       // Atribut 2: Periode Bulan
+  branchCode: string;        // Atribut 3: Cabang Operasional
+  customerName: string;      // Atribut 4: Nama Customer
+  jobNumber: string;         // Atribut 5: Nomor Pekerjaan (Job Number)
+  category: string;          // Atribut 6: Kategori Biaya
+  amount: number;            // Atribut 7: Nominal Biaya
+  hasEvidence: boolean;      // Kelengkapan Bukti Fisik
   evidenceUrl?: string | null;
   status: "Valid" | "Invalid";
   reasons: string[];
@@ -186,7 +186,7 @@ function NotificationPopover({
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -201,7 +201,7 @@ function NotificationPopover({
 
           <button
             onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
             Tandai semua dibaca
           </button>
@@ -209,7 +209,7 @@ function NotificationPopover({
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -219,7 +219,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -310,7 +310,7 @@ function NotificationPopover({
               onClose();
               if (onViewAllExceptions) onViewAllExceptions();
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
@@ -382,10 +382,10 @@ export default function DataUploadPage() {
 
       if (!res.error && res.data) {
         setDbExceptions(res.data);
-        const uniqueBranches = Array.from(new Set(res.data.map((d) => d.branch_code).filter(Boolean)));
+        const uniqueBranches = Array.from(new Set(res.data.map((d: any) => d.branch_code).filter(Boolean)));
         if (uniqueBranches.length > 0) {
           const opts: DropdownOption[] = [{ value: "Semua Cabang", label: "Semua Cabang" }];
-          uniqueBranches.forEach((b) => opts.push({ value: b, label: b }));
+          uniqueBranches.forEach((b: any) => opts.push({ value: b, label: b }));
           setDynamicCabangOptions(opts);
         }
       }
@@ -440,7 +440,7 @@ export default function DataUploadPage() {
     document.body.removeChild(link);
   };
 
-  // Engine Validasi File: Mendeteksi 7 Atribut Utama FR-CCR2-001
+  // Engine Validasi File: Mendeteksi 7 Atribut Utama FR-CCR2-001 Secara Presisi
   const processUploadedFile = async (file: File) => {
     setCommitSuccessData(null);
     setIsValidating(true);
@@ -461,43 +461,56 @@ export default function DataUploadPage() {
         const delimiter = lines[0].includes(";") ? ";" : ",";
         const headerCols = lines[0].split(delimiter).map((h) => h.trim().toLowerCase().replace(/^["']|["']$/g, ""));
 
-        const vIdx = headerCols.findIndex((h) => h.includes("voucher") || h.includes("id"));
-        const pIdx = headerCols.findIndex((h) => h.includes("period") || h.includes("bulan"));
-        const bIdx = headerCols.findIndex((h) => h.includes("branch") || h.includes("cabang") || h.includes("region"));
-        const cIdx = headerCols.findIndex((h) => h.includes("customer") || h.includes("pelanggan") || h.includes("entitas"));
-        const jIdx = headerCols.findIndex((h) => h.includes("job"));
-        const catIdx = headerCols.findIndex((h) => h.includes("cat") || h.includes("kategori"));
-        const aIdx = headerCols.findIndex((h) => h.includes("amount") || h.includes("cost") || h.includes("nominal"));
-        const eIdx = headerCols.findIndex((h) => h.includes("evidence") || h.includes("bukti"));
+        // Deteksi Kolom Presisi agar tidak salah mendeteksi cost_category sebagai nominal
+        const vIdx = headerCols.findIndex((h) => h === "voucher_no" || h.includes("voucher") || h === "id");
+        const pIdx = headerCols.findIndex((h) => h === "period_month" || h.includes("period") || h.includes("bulan"));
+        const bIdx = headerCols.findIndex((h) => h === "branch_code" || h.includes("branch") || h.includes("cabang") || h.includes("region"));
+        const cIdx = headerCols.findIndex((h) => h === "customer_name" || h.includes("customer") || h.includes("pelanggan") || h.includes("entitas"));
+        const jIdx = headerCols.findIndex((h) => h === "job_number" || h.includes("job"));
+        const catIdx = headerCols.findIndex((h) => h === "cost_category" || h.includes("category") || h.includes("kategori"));
+        const aIdx = headerCols.findIndex((h) => h === "actual_cost" || h === "amount" || h === "cost" || h.includes("actual") || h.includes("nominal") || (h.includes("cost") && !h.includes("category") && !h.includes("planned")));
+        const eIdx = headerCols.findIndex((h) => h === "has_evidence" || h.includes("evidence") || h.includes("bukti"));
 
         for (let i = 1; i < lines.length; i++) {
           const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^["']|["']$/g, ""));
-          if (cols.length < 4) continue;
+          if (cols.length < 3) continue;
 
-          const voucherNo = cols[vIdx !== -1 ? vIdx : 0] || `VCH-${String(i).padStart(4, "0")}`;
-          const periodMonth = cols[pIdx !== -1 ? pIdx : 1] || periode;
-          const branchCode = cols[bIdx !== -1 ? bIdx : 2] || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional);
-          const customerName = cols[cIdx !== -1 ? cIdx : 3] || "PT Nusantara Retail";
-          const jobNumber = cols[jIdx !== -1 ? jIdx : 4] || "UNMATCHED";
-          const category = cols[catIdx !== -1 ? catIdx : 5] || "TRUCKING";
+                  // 1. Ambil nilai apa adanya dari file (JANGAN beri nilai default palsu)
+          const voucherNo = cols[vIdx !== -1 ? vIdx : 0]?.trim() || "";
+          const periodMonth = cols[pIdx !== -1 ? pIdx : 1]?.trim() || periode;
+          const branchCode = cols[bIdx !== -1 ? bIdx : 2]?.trim() || "";
+          const customerName = cols[cIdx !== -1 ? cIdx : 3]?.trim() || "";
+          const jobNumber = cols[jIdx !== -1 ? jIdx : 4]?.trim() || "";
+          const category = cols[catIdx !== -1 ? catIdx : 5]?.trim() || "";
           const rawAmount = parseFloat((cols[aIdx !== -1 ? aIdx : 6] || "0").replace(/[^0-9.-]+/g, ""));
           const hasEvidence = cols[eIdx !== -1 ? eIdx : 7]?.toUpperCase() === "TRUE" || cols[eIdx !== -1 ? eIdx : 7] === "1";
 
           let status: "Valid" | "Invalid" = "Valid";
           const reasons: string[] = [];
 
-          if (isNaN(rawAmount) || rawAmount <= 0) {
+          // 2. VALIDASI KETAT: Jika kolom penting kosong atau format salah -> WAJIB INVALID
+          if (!customerName || customerName.length < 3) {
             status = "Invalid";
-            reasons.push("Nominal tidak valid / negatif");
+            reasons.push("Nama customer wajib diisi");
           }
 
-          const isJobInvalid = !jobNumber || jobNumber === "UNMATCHED" || jobNumber === "-" || jobNumber.includes("UNKNOWN");
-          if (isJobInvalid) {
-            reasons.push("JOB NOT FOUND (Belum sinkron CRM)");
+          if (isNaN(rawAmount) || rawAmount <= 0) {
+            status = "Invalid";
+            reasons.push("Nominal biaya harus berupa angka positif (> 0)");
+          }
+
+          if (!category) {
+            status = "Invalid";
+            reasons.push("Kategori biaya wajib diisi");
+          }
+
+          // 3. Pengecekan Anomali Bisnis (Status tetap Valid agar bisa masuk ke antrean Exception)
+          if (!jobNumber || jobNumber === "UNMATCHED" || jobNumber === "-") {
+            reasons.push("JOB NOT FOUND (Anomali)");
           }
 
           if (!hasEvidence) {
-            reasons.push("MISSING EVIDENCE (Bukti kuitansi kosong)");
+            reasons.push("MISSING EVIDENCE (Bukti kosong)");
           }
 
           if (rawAmount >= 50_000_000) {
@@ -534,7 +547,7 @@ export default function DataUploadPage() {
         worksheet.eachRow((row, rowNumber) => {
           if (rowNumber === 1) return;
           const values = row.values as any[];
-          if (!values || values.length < 5) return;
+          if (!values || values.length < 4) return;
 
           const voucher = String(values[1] || `VCH-${String(rowIdx).padStart(4, "0")}`);
           const pMonth = String(values[2] || periode);
@@ -580,7 +593,7 @@ export default function DataUploadPage() {
         });
       }
 
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise((r) => setTimeout(r, 400));
       setProgress(100);
       setValidationStage("Pemeriksaan selesai.");
 
@@ -608,7 +621,7 @@ export default function DataUploadPage() {
       const processableList = records.filter((r) => r.status === "Valid");
       if (processableList.length === 0) return;
 
-      // 1. Siapkan Payload Transaksi untuk Tabel Fisik c2_cost_actual_transactions
+      // 1. Siapkan Payload Transaksi (TANPA KOLOM variance KARENA DIHITUNG OTOMATIS OLEH DATABASE)
       const payload = processableList.map((r) => {
         const isJobMissing = !r.jobNumber || r.jobNumber === "UNMATCHED" || r.jobNumber === "-" || r.jobNumber.includes("UNKNOWN");
         const hasMissingEvidence = !r.hasEvidence;
@@ -634,9 +647,9 @@ export default function DataUploadPage() {
           period_month: r.periodMonth || periode,
           planned_cost: hasAnyAnomaly ? Math.round(r.amount * 0.9) : r.amount,
           actual_cost: r.amount,
-          variance: hasAnyAnomaly ? Math.round(r.amount * 0.1) : 0,
+          // PENTING: Kolom variance DIHAPUS agar tidak bentrok dengan Generated Column PostgreSQL
           has_evidence: r.hasEvidence !== false,
-          evidence_url: r.hasEvidence ? "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf" : null,
+          evidence_url: r.hasEvidence ? (r.evidenceUrl || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf") : null,
           reconciliation_result: isJobMissing ? "JOB_NOT_FOUND" : hasAnyAnomaly ? "OVER" : "MATCH",
           review_flag: hasAnyAnomaly,
           exception_tags: tags,
@@ -745,7 +758,7 @@ export default function DataUploadPage() {
             <button
               onClick={loadDatabaseData}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>Sinkronkan Supabase</span>
@@ -754,7 +767,7 @@ export default function DataUploadPage() {
             {/* Tombol Unduh Template */}
             <button
               onClick={handleDownloadTemplate}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5 text-slate-600" />
               <span>Unduh Template</span>
@@ -765,7 +778,7 @@ export default function DataUploadPage() {
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
@@ -806,14 +819,14 @@ export default function DataUploadPage() {
             </div>
             <button
               onClick={() => setCommitSuccessData(null)}
-              className="text-xs font-bold text-emerald-700 hover:underline"
+              className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
             >
               Tutup
             </button>
           </div>
         )}
 
-        {/* Filter Bar Parameter Ingesti (Sesuai Atribut Baku FR-001) */}
+        {/* Filter Bar Parameter Ingesti */}
         <div className="mt-5 flex flex-wrap items-end gap-3">
           <div className="w-52">
             <CustomDropdown
@@ -882,7 +895,7 @@ export default function DataUploadPage() {
 
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
             >
               <FileText className="h-3.5 w-3.5 text-slate-600" />
               <span>Pilih File</span>
@@ -914,7 +927,7 @@ export default function DataUploadPage() {
                   <button
                     onClick={handleCancel}
                     title="Ganti Berkas"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition"
+                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
                   >
                     <RefreshCw className="h-4 w-4" />
                   </button>
@@ -1060,11 +1073,11 @@ export default function DataUploadPage() {
               </p>
             </div>
 
-            {/* Tombol Tab Filter: Semua, Invalid, Valid (Hijau) */}
+            {/* Tombol Tab Filter: Semua, Invalid, Valid */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setFilterTab("Semua")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
                   filterTab === "Semua"
                     ? "bg-[#e0f2fe] text-[#0a7ebf]"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200"
@@ -1075,7 +1088,7 @@ export default function DataUploadPage() {
 
               <button
                 onClick={() => setFilterTab("Invalid")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
                   filterTab === "Invalid"
                     ? "bg-[#ffe4e6] text-[#e11d48]"
                     : "bg-rose-50/70 text-[#e11d48] hover:bg-rose-100"
@@ -1086,7 +1099,7 @@ export default function DataUploadPage() {
 
               <button
                 onClick={() => setFilterTab("Valid")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
                   filterTab === "Valid"
                     ? "bg-[#dcfce7] text-[#16a34a]"
                     : "bg-emerald-50/70 text-[#16a34a] hover:bg-emerald-100"
@@ -1165,7 +1178,7 @@ export default function DataUploadPage() {
             <div className="flex items-center gap-2.5">
               <button
                 onClick={handleCancel}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
               >
                 Batalkan
               </button>
@@ -1173,7 +1186,7 @@ export default function DataUploadPage() {
               <button
                 onClick={handleCommitData}
                 disabled={isCommitting || kpiCounts.processable === 0}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#0a7ebf] px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 rounded-lg bg-[#0a7ebf] px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
               >
                 {isCommitting ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />

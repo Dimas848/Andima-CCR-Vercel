@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import type { CostTransaction } from "./page";
@@ -22,6 +22,12 @@ interface AnomalyCardData {
 export default function ExceptionSummary({ transactions = [] }: ExceptionSummaryProps) {
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+
+  // Mengambil waktu saat komponen dimuat di sisi klien agar fungsi render tetap murni (pure)
+  useEffect(() => {
+    setCurrentTime(Date.now());
+  }, []);
 
   const formatJt = (val: number): string => {
     if (val === 0) return "Rp 0";
@@ -104,7 +110,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
 
   // 2. HALAMAN 2 S.D. 5: Murni Dihitung dari Data Transaksi Riil
   const pagesData: Record<number, AnomalyCardData[]> = useMemo(() => {
-    const now = Date.now();
+    const now = currentTime || 0;
 
     // Halaman 2: Dimensi SLA & Risiko Finansial
     let slaOverdueCount = 0;
@@ -116,8 +122,8 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       const actual = Number(t.actual_cost || 0);
       const planned = Number(t.planned_cost || 0);
       const variance = Number(t.variance || (actual - planned));
-      const createdTime = new Date(t.created_at || now).getTime();
-      const isOver24h = (now - createdTime) > 24 * 60 * 60 * 1000;
+      const createdTime = t.created_at ? new Date(t.created_at).getTime() : now;
+      const isOver24h = now > 0 && (now - createdTime) > 24 * 60 * 60 * 1000;
 
       if (isOver24h && (t.review_flag || variance > 0 || !t.has_evidence || !t.is_job_matched)) {
         slaOverdueCount++;
@@ -335,9 +341,9 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       4: page4,
       5: page5,
     };
-  }, [transactions, dynamicPage1Cards]);
+  }, [transactions, dynamicPage1Cards, currentTime]);
 
-  // Total Item Anomali Riil (Sesuai dengan 4 Kondisi Baku)
+  // Total Item Anomali Riil
   const totalItemCount = useMemo(() => {
     return transactions.filter(
       (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
@@ -362,7 +368,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
             <button
               key={pageNum}
               onClick={() => setCurrentPage(pageNum)}
-              className="group relative flex items-center justify-center transition active:scale-95"
+              className="group relative flex items-center justify-center transition active:scale-95 cursor-pointer"
               title={`Buka Halaman ${pageNum}`}
             >
               {currentPage === pageNum ? (
@@ -377,7 +383,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
 
           <button
             onClick={() => setCurrentPage((prev) => (prev < 5 ? prev + 1 : 1))}
-            className="text-[#0a7ebf] transition hover:text-[#08689d] active:scale-95 ml-0.5"
+            className="text-[#0a7ebf] transition hover:text-[#08689d] active:scale-95 ml-0.5 cursor-pointer"
             title="Halaman Berikutnya"
           >
             <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
