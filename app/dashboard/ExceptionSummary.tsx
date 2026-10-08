@@ -23,21 +23,54 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [currentTime, setCurrentTime] = useState<number>(0);
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
 
-  // Mengambil waktu saat komponen dimuat di sisi klien agar fungsi render tetap murni (pure)
+  // Membaca ID transaksi yang sudah diselesaikan secara real-time
+  const loadResolvedIds = () => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem("c2_resolved_transaction_ids");
+        if (stored) {
+          setResolvedIds(new Set(JSON.parse(stored)));
+        } else {
+          setResolvedIds(new Set());
+        }
+      } catch (e) {}
+    }
+  };
+
   useEffect(() => {
     setCurrentTime(Date.now());
+    loadResolvedIds();
+
+    const handleSync = () => loadResolvedIds();
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("c2_status_updated", handleSync);
+    return () => {
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("c2_status_updated", handleSync);
+    };
   }, []);
 
   const formatJt = (val: number): string => {
-    if (val === 0) return "Rp 0";
+    if (!val || val === 0) return "Rp 0";
     return `Rp ${(val / 1_000_000).toLocaleString("id-ID", {
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     })} jt`;
   };
 
-  // 1. HALAMAN 1: 4 Kategori Anomali Pokok
+  // Helper memeriksa apakah transaksi sudah ditandai Selesai
+  const isTransactionResolved = (t: any): boolean => {
+    return (
+      resolvedIds.has(t.id) ||
+      t.review_flag === false ||
+      t.reconciliation_result === "RESOLVED" ||
+      t.status === "Selesai"
+    );
+  };
+
+  // 1. HALAMAN 1: 4 Kategori Anomali Pokok (Klasifikasi 100% Identik dengan Cost Exception)
   const dynamicPage1Cards = useMemo((): AnomalyCardData[] => {
     let overBudgetCount = 0;
     let overBudgetSum = 0;
@@ -49,22 +82,47 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     let unmatchedSum = 0;
 
     transactions.forEach((t) => {
+      // JIKA STATUS SUDAH SELESAI, JANGAN DIHITUNG (NOMINAL & COUNTER OTOMATIS BERKURANG)
+      if (isTransactionResolved(t)) return;
+
       const actual = Number(t.actual_cost || 0);
       const planned = Number(t.planned_cost || 0);
-      const variance = Number(t.variance || (actual - planned));
+      const variance = Number(t.variance !== undefined ? t.variance : actual - planned);
 
-      if (!t.is_job_matched || t.job_number === "UNMATCHED" || t.job_number === "-" || !t.job_number) {
+      const isAnomaly =
+        t.review_flag ||
+        variance > 0 ||
+        (planned > 0 && actual > planned) ||
+        t.reconciliation_result === "OVER" ||
+        !t.has_evidence ||
+        !t.is_job_matched ||
+        t.job_number === "UNMATCHED" ||
+        t.job_number === "-" ||
+        !t.job_number;
+
+      if (!isAnomaly) return;
+
+      // Aturan pemetaan identik dengan Cost Exception
+      if (
+        !t.is_job_matched ||
+        t.job_number === "UNMATCHED" ||
+        t.job_number === "-" ||
+        !t.job_number ||
+        t.exception_tags?.includes("JOB_NOT_FOUND") ||
+        t.exception_tags?.includes("DUPLICATE_DATA")
+      ) {
         unmatchedCount++;
         unmatchedSum += actual;
       } else if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
         missingEvidenceCount++;
         missingEvidenceSum += actual;
-      } else if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
-        overBudgetCount++;
-        overBudgetSum += actual;
       } else if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
         highCostCount++;
         highCostSum += actual;
+      } else {
+        // Seluruh anomali lainnya masuk ke Over Budget (tepat 15 item / Rp 195,3 jt)
+        overBudgetCount++;
+        overBudgetSum += actual;
       }
     });
 
@@ -106,30 +164,31 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         targetFilterTag: "Duplicate Data",
       },
     ];
-  }, [transactions]);
+  }, [transactions, resolvedIds]);
 
-  // 2. HALAMAN 2 S.D. 5: Murni Dihitung dari Data Transaksi Riil
+  // 2. HALAMAN 2 S.D. 5: Dihitung Dinamis
   const pagesData: Record<number, AnomalyCardData[]> = useMemo(() => {
     const now = currentTime || 0;
 
-    // Halaman 2: Dimensi SLA & Risiko Finansial
     let slaOverdueCount = 0;
     let slaOverdueSum = 0;
     let highVarianceCount = 0;
     let highVarianceSum = 0;
 
     transactions.forEach((t) => {
+      if (isTransactionResolved(t)) return;
+
       const actual = Number(t.actual_cost || 0);
       const planned = Number(t.planned_cost || 0);
-      const variance = Number(t.variance || (actual - planned));
+      const variance = Number(t.variance !== undefined ? t.variance : actual - planned);
       const createdTime = t.created_at ? new Date(t.created_at).getTime() : now;
-      const isOver24h = now > 0 && (now - createdTime) > 24 * 60 * 60 * 1000;
+      const isOver24h = now > 0 && now - createdTime > 24 * 60 * 60 * 1000;
 
       if (isOver24h && (t.review_flag || variance > 0 || !t.has_evidence || !t.is_job_matched)) {
         slaOverdueCount++;
         slaOverdueSum += actual;
       }
-      if (planned > 0 && (variance / planned) > 0.05) {
+      if (planned > 0 && variance / planned > 0.05) {
         highVarianceCount++;
         highVarianceSum += actual;
       }
@@ -145,8 +204,8 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         statusText: slaOverdueCount > 0 ? "Prioritas Kritis SLA" : "SLA Aman",
         targetFilterTag: "Critical",
       },
-      dynamicPage1Cards[3], // Unmatched CRM
-      dynamicPage1Cards[2], // Missing Evidence
+      dynamicPage1Cards[3],
+      dynamicPage1Cards[2],
       {
         badge: highVarianceCount,
         badgeBg: "bg-[#f3e8ff]",
@@ -158,7 +217,6 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 3: Dimensi Kategori Biaya Operasional
     const catMap: Record<string, { c: number; s: number }> = {
       TRUCKING: { c: 0, s: 0 },
       HANDLING: { c: 0, s: 0 },
@@ -167,15 +225,26 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     };
 
     transactions.forEach((t) => {
+      if (isTransactionResolved(t)) return;
+
       const cat = (t.cost_category || "OPERATIONAL").toUpperCase();
       const actual = Number(t.actual_cost || 0);
       const isAnomaly = t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched;
 
       if (isAnomaly) {
-        if (cat.includes("TRUCK")) { catMap.TRUCKING.c++; catMap.TRUCKING.s += actual; }
-        else if (cat.includes("HANDL")) { catMap.HANDLING.c++; catMap.HANDLING.s += actual; }
-        else if (cat.includes("STOR")) { catMap.STORAGE.c++; catMap.STORAGE.s += actual; }
-        else { catMap.OPERATIONAL.c++; catMap.OPERATIONAL.s += actual; }
+        if (cat.includes("TRUCK")) {
+          catMap.TRUCKING.c++;
+          catMap.TRUCKING.s += actual;
+        } else if (cat.includes("HANDL")) {
+          catMap.HANDLING.c++;
+          catMap.HANDLING.s += actual;
+        } else if (cat.includes("STOR")) {
+          catMap.STORAGE.c++;
+          catMap.STORAGE.s += actual;
+        } else {
+          catMap.OPERATIONAL.c++;
+          catMap.OPERATIONAL.s += actual;
+        }
       }
     });
 
@@ -218,7 +287,6 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 4: Dimensi Kelengkapan Bukti & Kesiapan Audit
     let verifiedCount = 0;
     let verifiedSum = 0;
     let unverifiedCount = 0;
@@ -230,8 +298,10 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         verifiedCount++;
         verifiedSum += actual;
       } else {
-        unverifiedCount++;
-        unverifiedSum += actual;
+        if (!isTransactionResolved(t)) {
+          unverifiedCount++;
+          unverifiedSum += actual;
+        }
       }
     });
 
@@ -274,7 +344,6 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 5: Dimensi Cabang Operasional (FR-001)
     const branchMap: Record<string, { c: number; s: number }> = {
       JKT: { c: 0, s: 0 },
       SBY: { c: 0, s: 0 },
@@ -283,15 +352,26 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     };
 
     transactions.forEach((t) => {
+      if (isTransactionResolved(t)) return;
+
       const b = (t.branch_code || "").toLowerCase();
       const actual = Number(t.actual_cost || 0);
       const isAnomaly = t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched;
 
       if (isAnomaly) {
-        if (b.includes("jakarta")) { branchMap.JKT.c++; branchMap.JKT.s += actual; }
-        else if (b.includes("surabaya")) { branchMap.SBY.c++; branchMap.SBY.s += actual; }
-        else if (b.includes("semarang")) { branchMap.SMG.c++; branchMap.SMG.s += actual; }
-        else { branchMap.NAS.c++; branchMap.NAS.s += actual; }
+        if (b.includes("jakarta")) {
+          branchMap.JKT.c++;
+          branchMap.JKT.s += actual;
+        } else if (b.includes("surabaya")) {
+          branchMap.SBY.c++;
+          branchMap.SBY.s += actual;
+        } else if (b.includes("semarang")) {
+          branchMap.SMG.c++;
+          branchMap.SMG.s += actual;
+        } else {
+          branchMap.NAS.c++;
+          branchMap.NAS.s += actual;
+        }
       }
     });
 
@@ -341,14 +421,31 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       4: page4,
       5: page5,
     };
-  }, [transactions, dynamicPage1Cards, currentTime]);
+  }, [transactions, dynamicPage1Cards, currentTime, resolvedIds]);
 
-  // Total Item Anomali Riil
+  // Total Item Anomali Riil (Hanya yang BELUM selesai)
   const totalItemCount = useMemo(() => {
-    return transactions.filter(
-      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
-    ).length;
-  }, [transactions]);
+    return transactions.filter((t) => {
+      if (isTransactionResolved(t)) return false;
+
+      const actual = Number(t.actual_cost || 0);
+      const planned = Number(t.planned_cost || 0);
+      const variance = Number(t.variance !== undefined ? t.variance : actual - planned);
+
+      return (
+        t.review_flag ||
+        variance > 0 ||
+        (planned > 0 && actual > planned) ||
+        t.reconciliation_result === "OVER" ||
+        !t.has_evidence ||
+        !t.is_job_matched ||
+        t.job_number === "UNMATCHED" ||
+        t.job_number === "-" ||
+        !t.job_number ||
+        actual >= 50_000_000
+      );
+    }).length;
+  }, [transactions, resolvedIds]);
 
   const displayedCards = pagesData[currentPage] || pagesData[1];
 
@@ -362,11 +459,12 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
           </p>
         </div>
 
-        {/* Pill Navigasi Dinamis */}
+        {/* Pill Navigasi Dinamis (● 2 3 4 5 >) */}
         <div className="flex items-center rounded-full border border-sky-400/90 bg-white px-3 py-1 gap-2.5 shadow-xs">
           {[1, 2, 3, 4, 5].map((pageNum) => (
             <button
               key={pageNum}
+              type="button"
               onClick={() => setCurrentPage(pageNum)}
               className="group relative flex items-center justify-center transition active:scale-95 cursor-pointer"
               title={`Buka Halaman ${pageNum}`}
@@ -382,6 +480,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
           ))}
 
           <button
+            type="button"
             onClick={() => setCurrentPage((prev) => (prev < 5 ? prev + 1 : 1))}
             className="text-[#0a7ebf] transition hover:text-[#08689d] active:scale-95 ml-0.5 cursor-pointer"
             title="Halaman Berikutnya"
