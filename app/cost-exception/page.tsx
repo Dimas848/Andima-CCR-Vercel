@@ -10,6 +10,7 @@ import {
   Flame,
   ShieldAlert,
   Search,
+  ChevronLeft,
   ChevronRight,
   X,
   Sliders,
@@ -18,6 +19,9 @@ import {
   ArrowRight,
   FileText,
   CheckCircle2,
+  Check,
+  Loader2,
+  ShieldCheck,
 } from "lucide-react";
 
 import Sidebar from "@/components/sidebar";
@@ -37,6 +41,7 @@ export interface ExceptionItem {
   prioritas: ExceptionPriority;
   status: ExceptionStatus;
   slaExceeded?: boolean;
+  resolutionNotes?: string;
 }
 
 const MONTH_NAMES_ID = [
@@ -64,7 +69,7 @@ function formatCompactRupiah(val: number): string {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -83,6 +88,9 @@ interface NotificationPopoverProps {
     textColor: string;
     badgeBg: string;
   }[];
+  onSelectCategory: (tag: AnomalyTag) => void;
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
 }
 
 function NotificationPopover({
@@ -92,9 +100,11 @@ function NotificationPopover({
   totalExceptionCount,
   isLoading,
   categorySummaries,
+  onSelectCategory,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
 
@@ -106,11 +116,15 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isMarkedAllRead || totalExceptionCount === 0 ? "bg-slate-300" : "bg-[#0a7ebf]"
+                }`}
+              />
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -133,16 +147,16 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -152,7 +166,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -192,13 +206,20 @@ function NotificationPopover({
             categorySummaries.map((cat) => {
               const IconComp = cat.icon;
               return (
-                <div key={cat.tag} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  key={cat.tag}
+                  onClick={() => onSelectCategory(cat.tag)}
+                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer group"
+                  title={`Klik untuk memfilter tabel ke ${cat.tag}`}
+                >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgColor} ${cat.textColor}`}>
                     <IconComp className="h-4 w-4" />
                   </div>
                   <div className="flex-1">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-900">{cat.tag}</h3>
+                      <h3 className="text-xs font-bold text-slate-900 group-hover:text-[#0a7ebf] transition">
+                        {cat.tag}
+                      </h3>
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cat.badgeBg} ${cat.textColor}`}>
                         {cat.count} item
                       </span>
@@ -208,7 +229,7 @@ function NotificationPopover({
                       {cat.description}
                     </p>
                     <span className={`mt-2 block text-[11px] font-bold ${cat.textColor}`}>
-                      {cat.subNote}
+                      {cat.subNote} →
                     </span>
                   </div>
                 </div>
@@ -220,7 +241,7 @@ function NotificationPopover({
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Tutup notifikasi</span>
             <ArrowRight className="h-3.5 w-3.5" />
@@ -249,17 +270,37 @@ export default function CostExceptionPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>("Semua Status");
   const [isSlaFilterActive, setIsSlaFilterActive] = useState<boolean>(false);
 
-  // State Popover & Rule Modal
+  // State Notifikasi
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-  const [ruleBudgetVariance, setRuleBudgetVariance] = useState("5");
-  const [ruleHighCostLimit, setRuleHighCostLimit] = useState("50000000");
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState<boolean>(false);
 
-  // Pagination State: Tepat 6 baris per view
+  // State Rule Modal & Tindak Lanjut Resolusi
+  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
+  const [ruleBudgetVariance, setRuleBudgetVariance] = useState<string>("5");
+  const [ruleHighCostLimit, setRuleHighCostLimit] = useState<string>("50000000");
+
+  // State Review Item Terpilih (Klik Baris)
+  const [activeReviewItem, setActiveReviewItem] = useState<ExceptionItem | null>(null);
+  const [newStatus, setNewStatus] = useState<ExceptionStatus>("Ditinjau");
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Pagination State: 6 baris per halaman
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
-  // Tarik Data Live dari Supabase View c2_cost_transactions
+  // Baca konfigurasi rule alert tersimpan
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const savedVariance = localStorage.getItem("c2_rule_variance");
+      const savedHighCost = localStorage.getItem("c2_rule_highcost");
+      if (savedVariance) setRuleBudgetVariance(savedVariance);
+      if (savedHighCost) setRuleHighCostLimit(savedHighCost);
+    }
+  }, []);
+
+  // Tarik Data Live dari Supabase
   const fetchExceptionsFromSupabase = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -273,9 +314,21 @@ export default function CostExceptionPage() {
         return;
       }
 
-      const anomalyRecords = records.filter(
-        (item) => item.review_flag || item.variance > 0 || !item.has_evidence || !item.is_job_matched
-      );
+      const varianceThresholdPct = Number(ruleBudgetVariance) || 5;
+      const highCostThreshold = Number(ruleHighCostLimit) || 50_000_000;
+
+      const anomalyRecords = records.filter((item) => {
+        const actual = Number(item.actual_cost || 0);
+        const planned = Number(item.planned_cost || 0);
+        const variance = Number(item.variance || (actual - planned) || 0);
+        const isOverBudget = planned > 0 && variance > (planned * varianceThresholdPct) / 100;
+        const isHighCost = actual >= highCostThreshold;
+        const isDuplicateOrUnmatched =
+          !item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number;
+        const isMissingEvidence = !item.has_evidence;
+
+        return item.review_flag || isOverBudget || isHighCost || isDuplicateOrUnmatched || isMissingEvidence;
+      });
 
       if (anomalyRecords.length === 0) {
         setData([]);
@@ -286,9 +339,9 @@ export default function CostExceptionPage() {
         let tag: AnomalyTag = "Over Budget";
         let prio: ExceptionPriority = "High";
         const actual = Number(item.actual_cost || 0);
-        const variance = Number(item.variance || 0);
+        const planned = Number(item.planned_cost || 0);
+        const variance = Number(item.variance || (actual - planned) || 0);
 
-        // Hierarki Klasifikasi Mutually Exclusive Selaras Dashboard & FR-003
         if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
           tag = "Duplicate Data";
           prio = "Critical";
@@ -298,7 +351,7 @@ export default function CostExceptionPage() {
         } else if (variance > 0) {
           tag = "Over Budget";
           prio = variance > 20_000_000 ? "Critical" : "High";
-        } else if (actual >= Number(ruleHighCostLimit)) {
+        } else if (actual >= highCostThreshold) {
           tag = "High Cost";
           prio = "Critical";
         }
@@ -308,9 +361,11 @@ export default function CostExceptionPage() {
           : (item.status as ExceptionStatus) || "Ditinjau";
 
         const createdTime = new Date(item.created_at || Date.now()).getTime();
-        const isSlaExceeded = (Date.now() - createdTime > 24 * 60 * 60 * 1000) && stat !== "Selesai";
+        const isSlaExceeded = Date.now() - createdTime > 24 * 60 * 60 * 1000 && stat !== "Selesai";
 
-        const generatedId = item.code || (item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`);
+        const generatedId =
+          item.code ||
+          (item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`);
 
         return {
           id: generatedId,
@@ -322,6 +377,7 @@ export default function CostExceptionPage() {
           prioritas: prio,
           status: stat,
           slaExceeded: isSlaExceeded,
+          resolutionNotes: item.description || "",
         };
       });
 
@@ -333,23 +389,91 @@ export default function CostExceptionPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, [ruleHighCostLimit]);
+  }, [ruleBudgetVariance, ruleHighCostLimit]);
 
   useEffect(() => {
     fetchExceptionsFromSupabase();
   }, [fetchExceptionsFromSupabase]);
 
-  // Handler "Tinjau Sekarang": Langsung menyaring tabel secara instan tanpa pop-up
+  // Handler Klik Kartu Notifikasi
+  const handleSelectCategoryFromNotif = (tag: AnomalyTag) => {
+    setSelectedTag(tag);
+    setIsSlaFilterActive(false);
+    setCurrentPage(1);
+    setIsNotificationOpen(false);
+    setTimeout(() => {
+      document.getElementById("daftar-exception-table")?.scrollIntoView({ behavior: "smooth" });
+    }, 100);
+  };
+
+  // Handler "Tinjau Sekarang" pada Banner SLA
   const handleTinjauSla = () => {
     setIsSlaFilterActive((prev) => !prev);
     setSelectedTag("Semua Tipe");
     setSelectedStatus("Semua Status");
     setSearch("");
     setCurrentPage(1);
-
     setTimeout(() => {
       document.getElementById("daftar-exception-table")?.scrollIntoView({ behavior: "smooth" });
     }, 100);
+  };
+
+  // Simpan Perubahan Rule Alert
+  const handleSaveRuleAlert = () => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("c2_rule_variance", ruleBudgetVariance);
+      localStorage.setItem("c2_rule_highcost", ruleHighCostLimit);
+    }
+    setIsRuleModalOpen(false);
+    fetchExceptionsFromSupabase();
+    setToastMessage("Aturan parameter alert berhasil diperbarui dan diterapkan ke database.");
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Simpan Status Resolusi ke Supabase
+  const handleSaveReviewStatus = async () => {
+    if (!activeReviewItem) return;
+
+    try {
+      setIsUpdatingStatus(true);
+      const isResolved = newStatus === "Selesai";
+
+      const { error: txError } = await supabase
+        .from("c2_cost_actual_transactions")
+        .update({
+          status: newStatus,
+          review_flag: !isResolved,
+          description: reviewNotes || `Telah diverifikasi dengan status ${newStatus}`,
+        })
+        .eq("id", activeReviewItem.dbId);
+
+      if (txError) throw txError;
+
+      await supabase
+        .from("c2_cost_exceptions")
+        .update({
+          is_resolved: isResolved,
+          resolution_notes: reviewNotes || `Status ditutup ${newStatus}`,
+        })
+        .eq("transaction_id", activeReviewItem.dbId);
+
+      setData((prev) =>
+        prev.map((item) =>
+          item.dbId === activeReviewItem.dbId
+            ? { ...item, status: newStatus, resolutionNotes: reviewNotes }
+            : item
+        )
+      );
+
+      setToastMessage(`Status transaksi ${activeReviewItem.id} berhasil diperbarui ke "${newStatus}".`);
+      setActiveReviewItem(null);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err: any) {
+      console.error("Gagal simpan status:", err);
+      alert(`Gagal memperbarui status: ${err.message}`);
+    } finally {
+      setIsUpdatingStatus(false);
+    }
   };
 
   // Kalkulasi Metrik Dinamis
@@ -417,21 +541,6 @@ export default function CostExceptionPage() {
       });
     }
 
-    const highCost = data.filter((d) => d.tipeMasalah === "High Cost");
-    if (highCost.length > 0) {
-      categories.push({
-        tag: "High Cost",
-        count: highCost.length,
-        nominal: highCost.reduce((sum, item) => sum + item.nominal, 0),
-        description: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
-        subNote: "Perlu peninjauan biaya",
-        icon: AlertCircle,
-        bgColor: "bg-rose-50",
-        textColor: "text-[#e11d48]",
-        badgeBg: "bg-rose-50",
-      });
-    }
-
     const missingEvidence = data.filter((d) => d.tipeMasalah === "Missing Evidence");
     if (missingEvidence.length > 0) {
       categories.push({
@@ -462,6 +571,21 @@ export default function CostExceptionPage() {
       });
     }
 
+    const highCost = data.filter((d) => d.tipeMasalah === "High Cost");
+    if (highCost.length > 0) {
+      categories.push({
+        tag: "High Cost",
+        count: highCost.length,
+        nominal: highCost.reduce((sum, item) => sum + item.nominal, 0),
+        description: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
+        subNote: "Perlu peninjauan biaya",
+        icon: AlertCircle,
+        bgColor: "bg-rose-50",
+        textColor: "text-[#e11d48]",
+        badgeBg: "bg-rose-50",
+      });
+    }
+
     return categories;
   }, [data]);
 
@@ -481,14 +605,37 @@ export default function CostExceptionPage() {
     });
   }, [data, search, selectedTag, selectedStatus, isSlaFilterActive]);
 
-  // Paginasi: Tepat 6 baris per view, maksimal 4 nomor navigasi
+  // Total Halaman Nyata: 71 item / 6 = 12 halaman riil
   const totalItems = filteredData.length;
-  const totalPages = Math.min(4, Math.max(1, Math.ceil(totalItems / itemsPerPage)));
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
+  // Potong Data Sesuai Halaman Aktif
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
+
+  // Algoritma Sliding Window: Menampilkan tepat maksimal 4 tombol angka di UI
+  const visiblePages = useMemo(() => {
+    const maxButtons = 4;
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    let start = Math.max(1, currentPage - 1);
+    let end = start + maxButtons - 1;
+
+    if (end > totalPages) {
+      end = totalPages;
+      start = Math.max(1, end - maxButtons + 1);
+    }
+
+    const pages: number[] = [];
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }, [currentPage, totalPages]);
 
   const getTagPillClass = (tag: AnomalyTag) => {
     switch (tag) {
@@ -554,7 +701,7 @@ export default function CostExceptionPage() {
             <button
               onClick={fetchExceptionsFromSupabase}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
@@ -563,23 +710,23 @@ export default function CostExceptionPage() {
             {/* Tombol Atur Rule Alert */}
             <button
               onClick={() => setIsRuleModalOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
             >
               <Sliders className="h-3.5 w-3.5 text-slate-600" />
               <span>Atur Rule Alert</span>
             </button>
 
-            {/* Tombol Notifikasi Lonceng & Popover */}
+            {/* Tombol Notifikasi Lonceng */}
             <div className="relative">
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {metrics.total > 0 && (
+                {metrics.total > 0 && !isNotifMarkedRead && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -591,6 +738,9 @@ export default function CostExceptionPage() {
                 totalExceptionCount={metrics.total}
                 isLoading={isLoading}
                 categorySummaries={categorySummaries}
+                onSelectCategory={handleSelectCategoryFromNotif}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={() => setIsNotifMarkedRead((prev) => !prev)}
               />
             </div>
 
@@ -602,7 +752,20 @@ export default function CostExceptionPage() {
           </div>
         </div>
 
-        {/* 4 Kartu KPI Makro (dengan Skeleton) */}
+        {/* Toast Notifikasi Feedback */}
+        {toastMessage && (
+          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <Check className="h-5 w-5 text-emerald-600" />
+              <p className="text-xs font-bold text-emerald-950">{toastMessage}</p>
+            </div>
+            <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-950">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
+        {/* 4 Kartu KPI Makro */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, idx) => (
@@ -809,13 +972,23 @@ export default function CostExceptionPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
+                {selectedTag !== "Semua Tipe" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-2.5 py-0.5 text-[10px] font-bold text-[#0a7ebf]">
+                    <span>Filter: {selectedTag}</span>
+                    <button
+                      onClick={() => setSelectedTag("Semua Tipe")}
+                      className="hover:text-[#08689d] font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
                 {isSlaFilterActive && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-50 border border-rose-200 px-2.5 py-0.5 text-[10px] font-bold text-rose-700">
                     <span>SLA &gt; 24 Jam ({filteredData.length} item)</span>
                     <button
                       onClick={() => setIsSlaFilterActive(false)}
-                      className="hover:text-rose-950 font-bold"
-                      title="Hapus filter SLA"
+                      className="hover:text-rose-950 font-bold cursor-pointer"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -823,7 +996,7 @@ export default function CostExceptionPage() {
                 )}
               </div>
               <p className="text-[11px] text-slate-400">
-                Data real-time disinkronkan dengan database Supabase
+                Klik baris untuk meninjau dan menyelesaikan anomali langsung ke database
               </p>
             </div>
 
@@ -833,7 +1006,7 @@ export default function CostExceptionPage() {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-700" />
                 <input
                   type="text"
-                  placeholder="Cari customer atau ID..."
+                  placeholder="Cari customer, job, atau ID..."
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
@@ -854,9 +1027,9 @@ export default function CostExceptionPage() {
               >
                 <option value="Semua Tipe">Semua Tipe</option>
                 <option value="Over Budget">Over Budget</option>
-                <option value="High Cost">High Cost</option>
                 <option value="Missing Evidence">Missing Evidence</option>
                 <option value="Duplicate Data">Duplicate Data</option>
+                <option value="High Cost">High Cost</option>
               </select>
 
               {/* Dropdown Filter Status */}
@@ -877,12 +1050,12 @@ export default function CostExceptionPage() {
             </div>
           </div>
 
-          {/* Tabel Baris Anomali (Tepat 6 Baris Sesuai Batasan) */}
+          {/* Tabel Baris Anomali (Tepat 6 Baris per Halaman) */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 text-[11px] font-semibold text-slate-400">
-                  <th className="py-3 px-3">ID</th>
+                  <th className="py-3 px-3">ID RECORD</th>
                   <th className="py-3 px-3">CUSTOMER</th>
                   <th className="py-3 px-3">NOMINAL</th>
                   <th className="py-3 px-3">TIPE MASALAH</th>
@@ -919,17 +1092,29 @@ export default function CostExceptionPage() {
                     <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
                       {isSlaFilterActive
                         ? "Tidak ada data exception yang melebihi batas waktu SLA 24 jam."
-                        : "Tidak ada data exception yang ditemukan di Supabase."}
+                        : "Tidak ada data exception yang cocok dengan kriteria filter."}
                     </td>
                   </tr>
                 ) : (
                   paginatedData.map((row) => (
-                    <tr key={row.dbId} className="hover:bg-slate-50/60 transition">
+                    <tr
+                      key={row.dbId}
+                      onClick={() => {
+                        setActiveReviewItem(row);
+                        setNewStatus(row.status);
+                        setReviewNotes(row.resolutionNotes || "");
+                      }}
+                      className="hover:bg-slate-50 transition cursor-pointer"
+                      title="Klik untuk meninjau / mengubah status exception ini"
+                    >
                       <td className="py-3.5 px-3 font-mono font-medium text-slate-500">
                         {row.id}
                       </td>
-                      <td className="py-3.5 px-3 font-bold text-slate-800">
-                        {row.customer}
+                      <td className="py-3.5 px-3">
+                        <p className="font-bold text-slate-900">{row.customer}</p>
+                        <p className="font-mono text-[11px] text-slate-400">
+                          {row.jobNumber}
+                        </p>
                       </td>
                       <td className="py-3.5 px-3 font-medium text-slate-900">
                         {formatRupiah(row.nominal)}
@@ -968,7 +1153,7 @@ export default function CostExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Pagination: Terkunci Tepat Maksimal 4 Angka (1 2 3 4 >) */}
+          {/* Footer Pagination: Dinamis 4 Tombol Berjalan (Sliding Window) */}
           <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -982,12 +1167,24 @@ export default function CostExceptionPage() {
                   {Math.min(currentPage * itemsPerPage, totalItems)} dari {totalItems} exception
                 </p>
 
-                <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
-                  {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((num) => (
+                <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
+                  {/* Tombol Sebelumnya (<) */}
+                  {currentPage > 1 && (
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer"
+                      title="Halaman Sebelumnya"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                    </button>
+                  )}
+
+                  {/* Maksimal 4 Angka Berjalan Mengikuti Halaman yang Sedang Dibuka */}
+                  {visiblePages.map((num) => (
                     <button
                       key={num}
                       onClick={() => setCurrentPage(num)}
-                      className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                      className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
                         currentPage === num
                           ? "bg-[#0a7ebf] text-white font-bold"
                           : "text-slate-600 hover:text-slate-900"
@@ -997,14 +1194,16 @@ export default function CostExceptionPage() {
                     </button>
                   ))}
 
-                  <button
-                    disabled={currentPage >= totalPages}
-                    onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                    className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
-                    title="Halaman Berikutnya"
-                  >
-                    <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
-                  </button>
+                  {/* Tombol Selanjutnya (>) */}
+                  {currentPage < totalPages && (
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                      className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer"
+                      title="Halaman Berikutnya"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -1027,7 +1226,7 @@ export default function CostExceptionPage() {
                 </div>
                 <button
                   onClick={() => setIsRuleModalOpen(false)}
-                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1066,18 +1265,104 @@ export default function CostExceptionPage() {
               <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
                 <button
                   onClick={() => setIsRuleModalOpen(false)}
-                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
-                  onClick={() => {
-                    setIsRuleModalOpen(false);
-                    fetchExceptionsFromSupabase();
-                  }}
-                  className="rounded-lg bg-[#0a7ebf] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d]"
+                  onClick={handleSaveRuleAlert}
+                  className="rounded-lg bg-[#0a7ebf] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] cursor-pointer"
                 >
                   Simpan Perubahan
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal Tindak Lanjut Resolusi */}
+        {activeReviewItem && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 text-left">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-900">Tinjau Transaksi Exception</h3>
+                    <span className="font-mono text-xs text-slate-400">({activeReviewItem.id})</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">{activeReviewItem.customer}</p>
+                </div>
+                <button
+                  onClick={() => setActiveReviewItem(null)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3 text-xs">
+                <div className="rounded-xl bg-slate-50 p-3.5 border border-slate-100 space-y-1.5">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Nomor Pekerjaan:</span>
+                    <span className="font-semibold text-slate-900">{activeReviewItem.jobNumber || "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Nominal Aktual:</span>
+                    <span className="font-bold text-slate-900">{formatRupiah(activeReviewItem.nominal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Kategori Anomali:</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${getTagPillClass(activeReviewItem.tipeMasalah)}`}>
+                      {activeReviewItem.tipeMasalah}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700">Perbarui Status Peninjauan</label>
+                  <select
+                    value={newStatus}
+                    onChange={(e) => setNewStatus(e.target.value as ExceptionStatus)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-800 outline-none focus:border-[#0a7ebf]"
+                  >
+                    <option value="Terbuka">Terbuka</option>
+                    <option value="Ditinjau">Ditinjau</option>
+                    <option value="Dalam Proses">Dalam Proses</option>
+                    <option value="Selesai">Selesai (Tutup Exception)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700">Catatan Tindak Lanjut / Rekonsiliasi</label>
+                  <textarea
+                    rows={3}
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
+                    placeholder="Contoh: Bukti invoice fisik telah diverifikasi oleh tim Controller..."
+                    className="mt-1 w-full rounded-lg border border-slate-200 p-2.5 text-xs font-medium text-slate-800 placeholder:text-slate-400 outline-none focus:border-[#0a7ebf]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  onClick={() => setActiveReviewItem(null)}
+                  disabled={isUpdatingStatus}
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleSaveReviewStatus}
+                  disabled={isUpdatingStatus}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] disabled:opacity-50 cursor-pointer"
+                >
+                  {isUpdatingStatus ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                  )}
+                  <span>Simpan Status</span>
                 </button>
               </div>
             </div>

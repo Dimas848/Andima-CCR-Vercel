@@ -12,6 +12,7 @@ import {
   AlertCircle,
   FileText,
   Eye,
+  ChevronLeft,
   ChevronRight,
   X,
   ExternalLink,
@@ -87,7 +88,7 @@ function formatJt(val: number): string {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -106,6 +107,8 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
 }
 
 function NotificationPopover({
@@ -115,9 +118,10 @@ function NotificationPopover({
   isLoading,
   totalExceptions,
   categories,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
 
@@ -129,11 +133,15 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  isMarkedAllRead || totalExceptions === 0 ? "bg-slate-300" : "bg-[#0a7ebf]"
+                }`}
+              />
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -156,16 +164,16 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -175,7 +183,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -243,7 +251,7 @@ function NotificationPopover({
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Tutup notifikasi</span>
             <ArrowRight className="h-3.5 w-3.5" />
@@ -266,8 +274,11 @@ export default function CustomerCostPage() {
   const [selectedCustomerId, setSelectedCustomerId] = useState("—");
   const [periode, setPeriode] = useState<string>("Semua Periode");
 
-  // State Kontrol Loading
+  // State Notifikasi
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState<boolean>(false);
+
+  // State Kontrol Loading
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -275,12 +286,14 @@ export default function CustomerCostPage() {
   const [previewDoc, setPreviewDoc] = useState<DokumenBukti | null>(null);
   const [isAllDocsModalOpen, setIsAllDocsModalOpen] = useState(false);
 
-  // Filter Tables
+  // Filter & Pagination: Tabel Customer (4 item per halaman)
   const [searchCustomer, setSearchCustomer] = useState("");
   const [filterCustomerStatus, setFilterCustomerStatus] = useState("Semua Status");
   const [filterCustomerSegmen, setFilterCustomerSegmen] = useState("Semua Segmen");
   const [customerPage, setCustomerPage] = useState(1);
+  const custPerPage = 4;
 
+  // Filter & Pagination: Tabel Transaksi (6 item per halaman)
   const [filterTrxCategory, setFilterTrxCategory] = useState("Semua Kategori");
   const [trxPage, setTrxPage] = useState(1);
   const trxPerPage = 6;
@@ -295,7 +308,7 @@ export default function CustomerCostPage() {
   const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => {
     const list: DropdownOption[] = [{ value: "Semua Periode", label: "Semua Periode" }];
     const periodsFromDb = Array.from(new Set(rawTransactions.map((t) => t.period_month).filter(Boolean)));
-    
+
     if (periodsFromDb.length > 0) {
       periodsFromDb.forEach((p) => list.push({ value: p, label: p }));
     } else {
@@ -377,12 +390,10 @@ export default function CustomerCostPage() {
 
       setCustomersList(aggregated);
 
-      // Tetapkan Customer Pertama Secara Otomatis jika Belum Ada yang Terpilih
       setSelectedCustomer((prev) => {
         if (prev && map.has(prev)) return prev;
         return aggregated[0]?.namaCustomer || "";
       });
-
     } catch (err) {
       console.error(err);
       setCustomersList([]);
@@ -407,11 +418,9 @@ export default function CustomerCostPage() {
       return;
     }
 
-    // Perbarui ID Customer yang ditampilkan
     const foundCust = customersList.find((c) => c.namaCustomer === selectedCustomer);
     if (foundCust) setSelectedCustomerId(foundCust.idCustomer);
 
-    // Filter transaksi untuk customer aktif (dengan toleransi filter periode jika dipilih)
     const custTrx = rawTransactions.filter((t) => {
       const matchName = (t.customer_name || "").toLowerCase() === selectedCustomer.toLowerCase();
       const matchPeriod = periode === "Semua Periode" || t.period_month === periode;
@@ -450,7 +459,6 @@ export default function CustomerCostPage() {
 
     setTransactionsList(mappedTrx);
 
-    // Filter dokumen bukti transaksi nyata dari customer terpilih
     const docs: DokumenBukti[] = custTrx
       .filter((t) => t.has_evidence || t.evidence_url)
       .map((t, idx) => ({
@@ -483,7 +491,6 @@ export default function CustomerCostPage() {
     const countTrx = transactionsList.length;
     const excCount = transactionsList.filter((t) => t.status === "Exception").length;
 
-    // Hitung budget & variance customer terpilih
     const found = customersList.find((c) => c.namaCustomer === selectedCustomer);
     const budget = found?.budget || totalCost;
     const variance = totalCost - budget;
@@ -579,7 +586,7 @@ export default function CustomerCostPage() {
     return list;
   }, [rawTransactions]);
 
-  // Filter Tabel Customer
+  // Filter & Pagination: Tabel Customer (4 item per halaman)
   const filteredCustomers = useMemo(() => {
     return customersList.filter((c) => {
       const matchSearch = c.namaCustomer.toLowerCase().includes(searchCustomer.toLowerCase()) ||
@@ -590,7 +597,29 @@ export default function CustomerCostPage() {
     });
   }, [customersList, searchCustomer, filterCustomerStatus, filterCustomerSegmen]);
 
-  // Filter Tabel Transaksi Terbaru
+  const totalCustPages = Math.max(1, Math.ceil(filteredCustomers.length / custPerPage));
+  const displayedCustomers = useMemo(() => {
+    const start = (customerPage - 1) * custPerPage;
+    return filteredCustomers.slice(start, start + custPerPage);
+  }, [filteredCustomers, customerPage, custPerPage]);
+
+  const visibleCustPages = useMemo(() => {
+    const maxButtons = 4;
+    if (totalCustPages <= maxButtons) {
+      return Array.from({ length: totalCustPages }, (_, i) => i + 1);
+    }
+    let start = Math.max(1, customerPage - 1);
+    let end = start + maxButtons - 1;
+    if (end > totalCustPages) {
+      end = totalCustPages;
+      start = Math.max(1, end - maxButtons + 1);
+    }
+    const pages: number[] = [];
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  }, [customerPage, totalCustPages]);
+
+  // Filter & Pagination: Tabel Transaksi Terbaru (6 item per halaman)
   const filteredRecentTransactions = useMemo(() => {
     if (filterTrxCategory === "Semua Kategori") return transactionsList;
     return transactionsList.filter((t) => t.kategori === filterTrxCategory);
@@ -601,6 +630,22 @@ export default function CustomerCostPage() {
     const start = (trxPage - 1) * trxPerPage;
     return filteredRecentTransactions.slice(start, start + trxPerPage);
   }, [filteredRecentTransactions, trxPage, trxPerPage]);
+
+  const visibleTrxPages = useMemo(() => {
+    const maxButtons = 4;
+    if (totalTrxPages <= maxButtons) {
+      return Array.from({ length: totalTrxPages }, (_, i) => i + 1);
+    }
+    let start = Math.max(1, trxPage - 1);
+    let end = start + maxButtons - 1;
+    if (end > totalTrxPages) {
+      end = totalTrxPages;
+      start = Math.max(1, end - maxButtons + 1);
+    }
+    const pages: number[] = [];
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  }, [trxPage, totalTrxPages]);
 
   // Handler Unduh Detail CSV
   const handleDownloadDetail = () => {
@@ -646,7 +691,7 @@ export default function CustomerCostPage() {
             <button
               onClick={fetchCustomerDataFromSupabase}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
@@ -656,7 +701,7 @@ export default function CustomerCostPage() {
             <button
               onClick={handleDownloadDetail}
               disabled={transactionsList.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <Download className="h-3.5 w-3.5 text-slate-600" />
               <span>Unduh Detail</span>
@@ -667,12 +712,12 @@ export default function CustomerCostPage() {
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {rawTransactions.length > 0 && (
+                {rawTransactions.length > 0 && !isNotifMarkedRead && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -684,6 +729,8 @@ export default function CustomerCostPage() {
                 isLoading={isLoading}
                 totalExceptions={rawTransactions.filter((r) => r.review_flag || r.variance > 0).length}
                 categories={notificationCategories}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={() => setIsNotifMarkedRead((prev) => !prev)}
               />
             </div>
 
@@ -1037,7 +1084,7 @@ export default function CustomerCostPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredCustomers.slice((customerPage - 1) * 4, customerPage * 4).map((row, idx) => (
+                  displayedCustomers.map((row, idx) => (
                     <tr
                       key={row.idCustomer !== "—" ? `${row.idCustomer}-${row.namaCustomer}` : `cust-row-${idx}`}
                       onClick={() => {
@@ -1086,18 +1133,29 @@ export default function CustomerCostPage() {
             </table>
           </div>
 
+          {/* Footer Pagination Daftar Customer: Panah <, Angka Berjalan, Panah > */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             <p className="text-xs text-slate-400">
-              Menampilkan {filteredCustomers.length > 0 ? (customerPage - 1) * 4 + 1 : 0}–
-              {Math.min(customerPage * 4, filteredCustomers.length)} dari {filteredCustomers.length} customer
+              Menampilkan {filteredCustomers.length > 0 ? (customerPage - 1) * custPerPage + 1 : 0}–
+              {Math.min(customerPage * custPerPage, filteredCustomers.length)} dari {filteredCustomers.length} customer
             </p>
 
-            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
-              {Array.from({ length: Math.max(1, Math.ceil(filteredCustomers.length / 4)) }, (_, i) => i + 1).map((num) => (
+            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
+              {customerPage > 1 && (
+                <button
+                  onClick={() => setCustomerPage((p) => Math.max(1, p - 1))}
+                  className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer"
+                  title="Halaman Sebelumnya"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                </button>
+              )}
+
+              {visibleCustPages.map((num) => (
                 <button
                   key={num}
                   onClick={() => setCustomerPage(num)}
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
                     customerPage === num
                       ? "bg-[#0a7ebf] text-white font-bold"
                       : "text-slate-600 hover:text-slate-900"
@@ -1106,11 +1164,21 @@ export default function CustomerCostPage() {
                   {num}
                 </button>
               ))}
+
+              {customerPage < totalCustPages && (
+                <button
+                  onClick={() => setCustomerPage((p) => Math.min(p + 1, totalCustPages))}
+                  className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer"
+                  title="Halaman Berikutnya"
+                >
+                  <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                </button>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Baris 4: Tabel Transaksi Terbaru (Tepat 6 Baris per Halaman) */}
+        {/* Baris 4: Tabel Transaksi Terbaru */}
         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
@@ -1208,19 +1276,29 @@ export default function CustomerCostPage() {
             </table>
           </div>
 
-          {/* Footer Paginasi Transaksi: 6 Baris per Halaman */}
+          {/* Footer Pagination Transaksi: Panah <, Angka Berjalan, Panah > */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             <p className="text-xs text-slate-400">
               Menampilkan {filteredRecentTransactions.length > 0 ? (trxPage - 1) * trxPerPage + 1 : 0}–
               {Math.min(trxPage * trxPerPage, filteredRecentTransactions.length)} dari {filteredRecentTransactions.length} transaksi
             </p>
 
-            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
-              {Array.from({ length: totalTrxPages }, (_, i) => i + 1).map((num) => (
+            <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
+              {trxPage > 1 && (
+                <button
+                  onClick={() => setTrxPage((p) => Math.max(1, p - 1))}
+                  className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer"
+                  title="Halaman Sebelumnya"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                </button>
+              )}
+
+              {visibleTrxPages.map((num) => (
                 <button
                   key={num}
                   onClick={() => setTrxPage(num)}
-                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                  className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
                     trxPage === num
                       ? "bg-[#0a7ebf] text-white font-bold"
                       : "text-slate-600 hover:text-slate-900"
@@ -1230,14 +1308,15 @@ export default function CustomerCostPage() {
                 </button>
               ))}
 
-              <button
-                disabled={trxPage >= totalTrxPages}
-                onClick={() => setTrxPage((p) => Math.min(p + 1, totalTrxPages))}
-                className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
-                title="Halaman Berikutnya"
-              >
-                <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
-              </button>
+              {trxPage < totalTrxPages && (
+                <button
+                  onClick={() => setTrxPage((p) => Math.min(p + 1, totalTrxPages))}
+                  className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer"
+                  title="Halaman Berikutnya"
+                >
+                  <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                </button>
+              )}
             </div>
           </div>
         </div>

@@ -20,6 +20,7 @@ import {
   ArrowRight,
   ShieldCheck,
   ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
 
 import Sidebar from "@/components/sidebar";
@@ -116,7 +117,7 @@ function NotificationPopover({
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -140,7 +141,7 @@ function NotificationPopover({
 
           <button
             onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
             Tandai semua dibaca
           </button>
@@ -148,7 +149,7 @@ function NotificationPopover({
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -158,7 +159,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -226,7 +227,7 @@ function NotificationPopover({
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Tutup notifikasi</span>
             <ArrowRight className="h-3.5 w-3.5" />
@@ -264,7 +265,7 @@ export default function PriorityExceptionPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Pagination State: Tepat 6 baris per view
+  // Pagination State: 6 baris per view
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
@@ -348,7 +349,9 @@ export default function PriorityExceptionPage() {
         const createdDate = new Date(item.created_at || Date.now()).getTime();
         const diffHours = Math.max(1, Math.floor((Date.now() - createdDate) / (1000 * 60 * 60)));
 
-        const idGenerated = item.code || (item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`);
+        const idGenerated =
+          item.code ||
+          (item.id ? `EXC-${String(item.id).slice(-4).toUpperCase()}` : `EXC-${String(idx + 1).padStart(4, "0")}`);
 
         return {
           id: idGenerated,
@@ -414,7 +417,7 @@ export default function PriorityExceptionPage() {
     };
   }, [rows]);
 
-  // 3 Baris Teratas untuk "Fokus Hari Ini" berdasarkan risiko & nominal terbesar
+  // 3 Baris Teratas untuk "Fokus Hari Ini"
   const focusTodayItems = useMemo(() => {
     return [...rows]
       .filter((r) => r.status !== "Selesai")
@@ -497,16 +500,39 @@ export default function PriorityExceptionPage() {
     });
   }, [rows, search, selectedPrioritas, selectedStatus]);
 
-  // Paginasi: Tepat 6 baris per view, maksimal 4 nomor navigasi
+  // Total Halaman Nyata: 71 data / 6 = 12 halaman riil
   const totalItems = filteredRows.length;
-  const totalPages = Math.min(4, Math.max(1, Math.ceil(totalItems / itemsPerPage)));
+  const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
+  // Potong Data Sesuai Halaman Aktif
   const displayedTableRows = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredRows.slice(start, start + itemsPerPage);
   }, [filteredRows, currentPage, itemsPerPage]);
 
-  // Update Status ke Supabase (Sinkron Fisik ke c2_cost_actual_transactions & c2_cost_exceptions)
+  // Algoritma Sliding Window: Menampilkan tepat maksimal 4 tombol angka di UI
+  const visiblePages = useMemo(() => {
+    const maxButtons = 4;
+    if (totalPages <= maxButtons) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+
+    let start = Math.max(1, currentPage - 1);
+    let end = start + maxButtons - 1;
+
+    if (end > totalPages) {
+      end = totalPages;
+      start = Math.max(1, end - maxButtons + 1);
+    }
+
+    const pages: number[] = [];
+    for (let i = start; i <= end; i++) {
+      pages.push(i);
+    }
+    return pages;
+  }, [currentPage, totalPages]);
+
+  // Update Status ke Supabase
   const handleUpdateStatus = async (newStatus: ExceptionStatus) => {
     if (!activeItem) return;
 
@@ -515,7 +541,6 @@ export default function PriorityExceptionPage() {
       const isResolved = newStatus === "Selesai";
 
       if (activeItem.dbId && !activeItem.dbId.startsWith("db-")) {
-        // 1. Update ke tabel fisik transaksi utama
         const { error: txError } = await supabase
           .from("c2_cost_actual_transactions")
           .update({
@@ -527,7 +552,6 @@ export default function PriorityExceptionPage() {
 
         if (txError) throw txError;
 
-        // 2. Update log riwayat anomali jika tercatat
         await supabase
           .from("c2_cost_exceptions")
           .update({
@@ -605,18 +629,18 @@ export default function PriorityExceptionPage() {
             <button
               onClick={fetchPriorityData}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
             </button>
 
-            {/* Tombol Notifikasi Lonceng & Popover */}
+            {/* Tombol Notifikasi Lonceng */}
             <div className="relative">
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
@@ -657,7 +681,7 @@ export default function PriorityExceptionPage() {
           </div>
         )}
 
-        {/* 4 Kartu KPI Makro (dengan Skeleton) */}
+        {/* 4 Kartu KPI Makro */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, idx) => (
@@ -855,7 +879,7 @@ export default function PriorityExceptionPage() {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-700" />
                 <input
                   type="text"
-                  placeholder="Cari customer atau ID..."
+                  placeholder="Cari customer, job, atau ID..."
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
@@ -919,6 +943,7 @@ export default function PriorityExceptionPage() {
                     <tr key={idx} className="animate-pulse">
                       <td className="py-3.5 px-3">
                         <div className="h-4 w-32 rounded bg-slate-200" />
+                        <div className="mt-1 h-3 w-20 rounded bg-slate-100" />
                       </td>
                       <td className="py-3.5 px-3">
                         <div className="h-4 w-44 rounded bg-slate-200" />
@@ -949,8 +974,12 @@ export default function PriorityExceptionPage() {
                 ) : (
                   displayedTableRows.map((row) => (
                     <tr key={row.dbId} className="hover:bg-slate-50/60 transition">
-                      <td className="py-3.5 px-3 font-bold text-slate-800">
-                        {row.customer}
+                      {/* Customer + Identitas Unik (Job Number & ID) */}
+                      <td className="py-3.5 px-3">
+                        <p className="font-bold text-slate-900">{row.customer}</p>
+                        <p className="font-mono text-[11px] text-slate-400">
+                          {row.jobNumber} · {row.id}
+                        </p>
                       </td>
                       <td className="py-3.5 px-3 text-slate-600">
                         {row.masalah}
@@ -985,7 +1014,7 @@ export default function PriorityExceptionPage() {
                             setActiveItem(row);
                             setNotes(row.resolutionNotes || "");
                           }}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-800 shadow-sm transition hover:bg-slate-50 cursor-pointer"
                         >
                           Lihat Detail
                         </button>
@@ -997,7 +1026,7 @@ export default function PriorityExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Tabel & Paginasi Maksimal 4 Angka (1 2 3 4 >) */}
+          {/* Footer Tabel & Paginasi Dinamis 4 Tombol Berjalan (Sliding Window) */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -1016,12 +1045,24 @@ export default function PriorityExceptionPage() {
                     {timeAgoText}
                   </span>
 
-                  <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2.5 shadow-xs">
-                    {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((num) => (
+                  <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
+                    {/* Tombol Sebelumnya (<) */}
+                    {currentPage > 1 && (
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        className="text-[#0a7ebf] transition hover:text-[#08689d] mr-0.5 cursor-pointer"
+                        title="Halaman Sebelumnya"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                      </button>
+                    )}
+
+                    {/* Maksimal 4 Angka Berjalan */}
+                    {visiblePages.map((num) => (
                       <button
                         key={num}
                         onClick={() => setCurrentPage(num)}
-                        className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition ${
+                        className={`flex h-5 w-5 items-center justify-center rounded-full text-xs font-semibold transition cursor-pointer ${
                           currentPage === num
                             ? "bg-[#0a7ebf] text-white font-bold"
                             : "text-slate-600 hover:text-slate-900"
@@ -1031,14 +1072,16 @@ export default function PriorityExceptionPage() {
                       </button>
                     ))}
 
-                    <button
-                      disabled={currentPage >= totalPages}
-                      onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                      className="text-[#0a7ebf] transition hover:text-[#08689d] disabled:opacity-30 ml-0.5"
-                      title="Halaman Berikutnya"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
-                    </button>
+                    {/* Tombol Selanjutnya (>) */}
+                    {currentPage < totalPages && (
+                      <button
+                        onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                        className="text-[#0a7ebf] transition hover:text-[#08689d] ml-0.5 cursor-pointer"
+                        title="Halaman Berikutnya"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5 stroke-[2.5]" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </>
@@ -1057,7 +1100,7 @@ export default function PriorityExceptionPage() {
                 </div>
                 <button
                   onClick={() => setActiveItem(null)}
-                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1098,7 +1141,7 @@ export default function PriorityExceptionPage() {
               <div className="mt-5 flex items-center justify-end gap-2 border-t border-slate-100 pt-3">
                 <button
                   onClick={() => setActiveItem(null)}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
                   Batal
                 </button>
