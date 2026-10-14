@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import type { CostTransaction } from "./page";
@@ -19,60 +19,107 @@ interface AnomalyCardData {
   targetFilterTag?: string;
 }
 
-// Helper klasifikasi tunggal agar 100% identik dengan halaman Cost Exception & Priority Exception
-export function classifyTransactionAnomaly(t: CostTransaction, varianceThresholdPct = 0, highCostLimit = 50_000_000) {
-  const actual = Number(t.actual_cost || 0);
-  const planned = Number(t.planned_cost || 0);
-  const variance = Number(t.variance !== undefined && t.variance !== null ? t.variance : actual - planned);
-  const job = String(t.job_number || "").trim();
-
-  const isUnmatched =
-    !t.is_job_matched ||
-    job === "" ||
-    job === "-" ||
-    job === "UNMATCHED" ||
-    job === "JOB-UNKNOWN-001" ||
-    t.exception_tags?.includes("JOB_NOT_FOUND") ||
-    t.exception_tags?.includes("DUPLICATE_DATA");
-
-  const isHighCost = actual >= highCostLimit || t.exception_tags?.includes("HIGH_COST");
-
-  const isOverBudget =
-    (variance > 0 && (varianceThresholdPct <= 0 || planned === 0 || variance > (planned * varianceThresholdPct) / 100)) ||
-    t.exception_tags?.includes("OVER_BUDGET");
-
-  const isMissingEvidence = !t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE");
-
-  if (isUnmatched) return "Duplicate Data";
-  if (isHighCost) return "High Cost";
-  if (isOverBudget) return "Over Budget";
-  if (isMissingEvidence) return "Missing Evidence";
-  return null; // Transaksi Normal (MATCH)
-}
+const STORAGE_STATUS_KEY = "c2_exception_status_sync";
 
 export default function ExceptionSummary({ transactions = [] }: ExceptionSummaryProps) {
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [currentTime, setCurrentTime] = useState<number>(0);
+
+  const [resolvedMap, setResolvedMap] = useState<Record<string, { status: string; notes?: string }>>({});
+  const [ruleVariancePct, setRuleVariancePct] = useState<number>(0);
+  const [ruleHighCostLimit, setRuleHighCostLimit] = useState<number>(50_000_000);
+
+  const syncLatestExceptionState = useCallback(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const savedResolved = JSON.parse(localStorage.getItem(STORAGE_STATUS_KEY) || "{}");
+        setResolvedMap(savedResolved);
+
+        const savedVar = localStorage.getItem("c2_rule_variance");
+        if (savedVar !== null && savedVar !== "") setRuleVariancePct(Number(savedVar) || 0);
+
+        const savedHigh = localStorage.getItem("c2_rule_highcost");
+        if (savedHigh !== null && savedHigh !== "") setRuleHighCostLimit(Number(savedHigh) || 50_000_000);
+      } catch {
+        // Abaikan jika JSON kosong
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    setCurrentTime(Date.now());
-  }, []);
+    syncLatestExceptionState();
+
+    const handleFocusOrStorage = () => {
+      syncLatestExceptionState();
+    };
+    window.addEventListener("focus", handleFocusOrStorage);
+    window.addEventListener("storage", handleFocusOrStorage);
+    return () => {
+      window.removeEventListener("focus", handleFocusOrStorage);
+      window.removeEventListener("storage", handleFocusOrStorage);
+    };
+  }, [syncLatestExceptionState, transactions]);
 
   const formatJt = (val: number): string => {
     if (val === 0) return "Rp 0";
-    return `Rp ${(val / 1_000_000).toLocaleString("id-ID", {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    })} jt`;
+    if (Math.abs(val) >= 1_000_000_000) {
+      return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 2,
+      })} M`;
+    }
+    if (Math.abs(val) >= 1_000_000) {
+      return `Rp ${(val / 1_000_000).toLocaleString("id-ID", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      })} jt`;
+    }
+    return `Rp ${val.toLocaleString("id-ID")}`;
   };
 
-  // Hanya ambil transaksi yang benar-benar memiliki anomali (abaikan 14 transaksi normal MATCH)
-  const realAnomalies = useMemo(() => {
-    return transactions.filter((t) => classifyTransactionAnomaly(t) !== null);
-  }, [transactions]);
+  // Klasifikasi yang 100% IDENTIK dengan app/cost-exception/page.tsx
+  const classifyTransaction = useCallback(
+    (t: CostTransaction): "Duplicate Data" | "High Cost" | "Over Budget" | "Missing Evidence" | null => {
+      const actual = Number(t.actual_cost || 0);
+      const planned = Number(t.planned_cost || 0);
+      const variance = Number(
+        t.variance !== undefined && t.variance !== null ? t.variance : actual - planned
+      );
+      const job = String(t.job_number || "").trim();
 
-  // 1. HALAMAN 1: 4 Kategori Anomali Pokok (Sinkron 100% dengan Cost Exception)
+      const isDuplicateOrUnmatched =
+        !t.is_job_matched ||
+        job === "" ||
+        job === "-" ||
+        job === "UNMATCHED" ||
+        job === "JOB-UNKNOWN-001";
+
+      const isHighCost = actual >= ruleHighCostLimit;
+      const isOverBudget =
+        variance > 0 &&
+        (ruleVariancePct <= 0 || planned === 0 || variance > (planned * ruleVariancePct) / 100);
+      const isMissingEvidence = !t.has_evidence;
+
+      if (isDuplicateOrUnmatched) return "Duplicate Data";
+      if (isHighCost) return "High Cost";
+      if (isOverBudget) return "Over Budget";
+      if (isMissingEvidence) return "Missing Evidence";
+      return null;
+    },
+    [ruleHighCostLimit, ruleVariancePct]
+  );
+
+  // Filter hanya transaksi anomali aktif yang belum diubah menjadi "Selesai"
+  const activeTransactions = useMemo(() => {
+    return transactions.filter((t) => {
+      const category = classifyTransaction(t);
+      if (!category) return false;
+      const status = resolvedMap[t.id]?.status || "Terbuka";
+      return status !== "Selesai";
+    });
+  }, [transactions, classifyTransaction, resolvedMap]);
+
+  // 1. HALAMAN 1: 4 Kategori Anomali Pokok
   const dynamicPage1Cards = useMemo((): AnomalyCardData[] => {
     let overBudgetCount = 0;
     let overBudgetSum = 0;
@@ -83,9 +130,9 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     let unmatchedCount = 0;
     let unmatchedSum = 0;
 
-    realAnomalies.forEach((t) => {
+    activeTransactions.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
-      const category = classifyTransactionAnomaly(t);
+      const category = classifyTransaction(t);
 
       if (category === "Duplicate Data") {
         unmatchedCount++;
@@ -140,29 +187,28 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         targetFilterTag: "Duplicate Data",
       },
     ];
-  }, [realAnomalies]);
+  }, [activeTransactions, classifyTransaction]);
 
-  // 2. HALAMAN 2 S.D. 5: Murni Dihitung dari Data Transaksi Anomali Riil
+  // 2. HALAMAN 2 S.D. 5
   const pagesData: Record<number, AnomalyCardData[]> = useMemo(() => {
-    const now = currentTime || 0;
-
-    let slaOverdueCount = 0;
-    let slaOverdueSum = 0;
+    let criticalSlaCount = 0;
+    let criticalSlaSum = 0;
     let highVarianceCount = 0;
     let highVarianceSum = 0;
 
-    realAnomalies.forEach((t) => {
+    activeTransactions.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
       const planned = Number(t.planned_cost || 0);
-      const variance = Number(t.variance || actual - planned);
-      const createdTime = t.created_at ? new Date(t.created_at).getTime() : now;
-      const isOver24h = now > 0 && now - createdTime > 24 * 60 * 60 * 1000 && t.status !== "Selesai";
+      const variance = Number(t.variance !== undefined && t.variance !== null ? t.variance : actual - planned);
+      const cat = classifyTransaction(t);
+      const isCritical =
+        cat === "Duplicate Data" || cat === "High Cost" || (cat === "Over Budget" && variance > 20_000_000);
 
-      if (isOver24h) {
-        slaOverdueCount++;
-        slaOverdueSum += actual;
+      if (isCritical) {
+        criticalSlaCount++;
+        criticalSlaSum += actual;
       }
-      if (planned > 0 && variance / planned > 0.05) {
+      if (variance > 0 && (planned === 0 || variance / planned > 0.05)) {
         highVarianceCount++;
         highVarianceSum += actual;
       }
@@ -170,12 +216,12 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
 
     const page2: AnomalyCardData[] = [
       {
-        badge: slaOverdueCount,
+        badge: criticalSlaCount,
         badgeBg: "bg-[#fee2e2]",
         badgeTextColor: "text-[#e11d48]",
         title: "> 24 Jam Overdue",
-        nominal: formatJt(slaOverdueSum),
-        statusText: slaOverdueCount > 0 ? "Prioritas Kritis SLA" : "SLA Aman",
+        nominal: formatJt(criticalSlaSum),
+        statusText: criticalSlaCount > 0 ? "Prioritas Kritis SLA" : "SLA Aman",
         targetFilterTag: "Semua Tipe",
       },
       dynamicPage1Cards[3],
@@ -198,7 +244,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       OPERATIONAL: { c: 0, s: 0 },
     };
 
-    realAnomalies.forEach((t) => {
+    activeTransactions.forEach((t) => {
       const cat = (t.cost_category || "OPERATIONAL").toUpperCase();
       const actual = Number(t.actual_cost || 0);
 
@@ -261,9 +307,11 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     let unverifiedCount = 0;
     let unverifiedSum = 0;
 
-    realAnomalies.forEach((t) => {
+    transactions.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
-      if (t.has_evidence) {
+      const isActiveAnomaly = activeTransactions.some((act) => act.id === t.id);
+
+      if (t.has_evidence || !isActiveAnomaly) {
         verifiedCount++;
         verifiedSum += actual;
       } else {
@@ -318,7 +366,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       NAS: { c: 0, s: 0 },
     };
 
-    realAnomalies.forEach((t) => {
+    activeTransactions.forEach((t) => {
       const b = (t.branch_code || "").toLowerCase();
       const actual = Number(t.actual_cost || 0);
 
@@ -344,7 +392,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#e11d48]",
         title: "Jakarta Pusat",
         nominal: formatJt(branchMap.JKT.s),
-        statusText: `${branchMap.JKT.c} item anomali`,
+        statusText: `${branchMap.JKT.c} item aktif`,
         targetFilterTag: "Over Budget",
       },
       {
@@ -353,7 +401,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#e11d48]",
         title: "Surabaya",
         nominal: formatJt(branchMap.SBY.s),
-        statusText: `${branchMap.SBY.c} item anomali`,
+        statusText: `${branchMap.SBY.c} item aktif`,
         targetFilterTag: "High Cost",
       },
       {
@@ -362,7 +410,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#d97706]",
         title: "Semarang",
         nominal: formatJt(branchMap.SMG.s),
-        statusText: `${branchMap.SMG.c} item anomali`,
+        statusText: `${branchMap.SMG.c} item aktif`,
         targetFilterTag: "Missing Evidence",
       },
       {
@@ -371,7 +419,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#9333ea]",
         title: "Cabang Lainnya",
         nominal: formatJt(branchMap.NAS.s),
-        statusText: `${branchMap.NAS.c} item anomali`,
+        statusText: `${branchMap.NAS.c} item aktif`,
         targetFilterTag: "Duplicate Data",
       },
     ];
@@ -383,12 +431,17 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       4: page4,
       5: page5,
     };
-  }, [realAnomalies, dynamicPage1Cards, currentTime]);
+  }, [activeTransactions, transactions, dynamicPage1Cards, classifyTransaction]);
 
-  // Total Item Anomali Riil (Sama persis dengan penjumlahan ke-4 kartu!)
-  const totalItemCount = realAnomalies.length;
-
+  const totalItemCount = activeTransactions.length;
   const displayedCards = pagesData[currentPage] || pagesData[1];
+
+  const handleCardClick = (targetFilterTag?: string) => {
+    if (targetFilterTag && typeof window !== "undefined") {
+      sessionStorage.setItem("c2_filter_tag", targetFilterTag);
+    }
+    router.push("/cost-exception");
+  };
 
   return (
     <div className="rounded-2xl border border-slate-200/90 bg-white p-6 shadow-sm">
@@ -434,12 +487,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         {displayedCards.map((card, idx) => (
           <div
             key={`${card.title}-${idx}`}
-            onClick={() => {
-              if (typeof window !== "undefined" && card.targetFilterTag) {
-                sessionStorage.setItem("c2_filter_tag", card.targetFilterTag);
-              }
-              router.push("/cost-exception");
-            }}
+            onClick={() => handleCardClick(card.targetFilterTag)}
             className="cursor-pointer rounded-xl bg-[#f8fafc] p-4 transition-all duration-200 hover:bg-slate-100/90 hover:shadow-xs active:scale-[0.99]"
             title={`Klik untuk meninjau ${card.title}`}
           >

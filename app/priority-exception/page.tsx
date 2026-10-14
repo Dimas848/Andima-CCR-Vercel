@@ -373,7 +373,7 @@ export default function PriorityExceptionPage() {
 
       const resolvedMap: Record<string, { status: ExceptionStatus; notes: string }> =
         typeof window !== "undefined"
-          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          ? JSON.parse(localStorage.getItem("c2_exception_status_sync") || "{}")
           : {};
 
       // Hanya masukkan 18 transaksi anomali asli (abaikan 14 transaksi normal MATCH)
@@ -428,18 +428,7 @@ export default function PriorityExceptionPage() {
         }
 
         const savedEntry = resolvedMap[item.id];
-        let status: ExceptionStatus = "Terbuka";
-        if (savedEntry?.status) {
-          status = savedEntry.status;
-        } else if (
-          item.status === "Selesai" ||
-          item.status_computed === "Selesai" ||
-          item.is_resolved === true
-        ) {
-          status = "Selesai";
-        } else if (item.status === "Ditinjau" || item.status === "Dalam Proses") {
-          status = item.status as ExceptionStatus;
-        }
+        const status: ExceptionStatus = savedEntry?.status || "Terbuka";
 
         const createdDate = new Date(item.created_at || Date.now()).getTime();
         const diffHours = Math.max(1, Math.floor((Date.now() - createdDate) / (1000 * 60 * 60)));
@@ -671,13 +660,13 @@ export default function PriorityExceptionPage() {
       }
 
       if (typeof window !== "undefined") {
-        const resolvedMap = JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}");
+        const resolvedMap = JSON.parse(localStorage.getItem("c2_exception_status_sync") || "{}");
         resolvedMap[activeItem.dbId] = {
           status: newStatus,
           notes: finalNotes,
           updatedAt: new Date().toISOString(),
         };
-        localStorage.setItem("c2_resolved_exceptions", JSON.stringify(resolvedMap));
+        localStorage.setItem("c2_exception_status_sync", JSON.stringify(resolvedMap));
       }
 
       setRows((prev) =>
