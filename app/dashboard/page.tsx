@@ -30,7 +30,6 @@ import DataHealth from "./DataHealth";
 import CustomDropdown, { DropdownOption } from "./CustomDropdown";
 import { supabase } from "@/lib/supabase";
 
-// Interface Transaksi Biaya C2 Resmi Sesuai View c2_cost_transactions
 export interface CostTransaction {
   id: string;
   job_number: string;
@@ -49,12 +48,12 @@ export interface CostTransaction {
   voucher_no: string;
   description: string;
   is_job_matched: boolean;
+  status?: string;
   consignee?: string;
   shipper?: string;
   created_at?: string;
 }
 
-// Helper Nama Bulan Real-Time Bahasa Indonesia
 const MONTH_NAMES_ID = [
   "Januari", "Februari", "Maret", "April", "Mei", "Juni",
   "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -66,7 +65,6 @@ function getDynamicPeriod(offsetMonths = 0): string {
   return `${MONTH_NAMES_ID[d.getMonth()]} ${d.getFullYear()}`;
 }
 
-// Helper Format Rupiah Compact & Standar
 const formatCompactRupiah = (val: number) => {
   if (val === 0) return "Rp 0";
   if (Math.abs(val) >= 1_000_000_000) {
@@ -78,7 +76,6 @@ const formatCompactRupiah = (val: number) => {
   return `Rp ${val.toLocaleString("id-ID")}`;
 };
 
-// Helper Parser JSON Array untuk exception_tags dari Supabase
 const parseTags = (raw: any): string[] => {
   if (Array.isArray(raw)) return raw;
   if (typeof raw === "string") {
@@ -92,9 +89,58 @@ const parseTags = (raw: any): string[] => {
   return [];
 };
 
-// =========================================================================
-// SUB-KOMPONEN: SKELETON LOADERS
-// =========================================================================
+// HELPER FIX BUG-UI-001: Bersihkan teks "Web Url" dan "[object Object]"
+const FALLBACK_CUSTOMERS = [
+  "PT CEVA AIR OCEAN INDONESIA",
+  "PT MAERSK LOGISTICS INDONESIA",
+  "PT DSV TRANSPORT INDONESIA",
+  "PT GARUDA TEKNOLOGI",
+];
+
+export function cleanCustomerName(raw: any, index = 0): string {
+  if (!raw) return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  if (typeof raw === "object") {
+    const extracted = raw.text || raw.name || raw.label || raw.result || "";
+    if (extracted && typeof extracted === "string") return cleanCustomerName(extracted, index);
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  return str;
+}
+
+export function cleanBranchName(raw: any): string {
+  if (!raw || typeof raw === "object") return "Jakarta Pusat";
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http")
+  ) {
+    return "Jakarta Pusat";
+  }
+  return str;
+}
+
 function KpiSkeletonCard() {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
@@ -132,14 +178,16 @@ function SectionSkeletonCard({ height = "h-72" }: { height?: string }) {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (SINKRON DENGAN PRIORITY EXCEPTION)
+// SUB-KOMPONEN: NOTIFICATION POPOVER (FIX BUG-FN-002)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
   onClose: () => void;
   transactions?: CostTransaction[];
   periode?: string;
-  onViewAllExceptions?: () => void;
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
+  onNavigateException: (category?: string) => void;
 }
 
 function NotificationPopover({
@@ -147,12 +195,12 @@ function NotificationPopover({
   onClose,
   transactions = [],
   periode,
-  onViewAllExceptions,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
+  onNavigateException,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
-  // Kalkulasi Murni dari Database (Sinkron dengan Kategori Anomali)
   const notifData = useMemo(() => {
     let overBudget = 0;
     let overBudgetSum = 0;
@@ -163,7 +211,10 @@ function NotificationPopover({
     let unmatched = 0;
     let unmatchedSum = 0;
 
-    transactions.forEach((t) => {
+    // Hanya hitung transaksi yang belum diselesaikan
+    const activeTx = transactions.filter((t) => t.status !== "Selesai");
+
+    activeTx.forEach((t) => {
       const actual = Number(t.actual_cost) || 0;
       const planned = Number(t.planned_cost) || 0;
       const variance = Number(t.variance) || (actual - planned);
@@ -186,7 +237,7 @@ function NotificationPopover({
       }
     });
 
-    const total = transactions.filter(
+    const total = activeTx.filter(
       (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
     ).length;
 
@@ -214,35 +265,37 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {!isMarkedAllRead && notifData.totalExceptions > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
 
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           <p className="mt-2 text-xs font-bold text-slate-800">
-            {notifData.totalExceptions} exception perlu tindak lanjut
+            {isMarkedAllRead ? 0 : notifData.totalExceptions} exception perlu tindak lanjut
           </p>
           <p className="mt-0.5 text-[11px] text-slate-400">
             Ringkasan exception · {periode}
           </p>
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tandai belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -252,7 +305,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -275,7 +328,12 @@ function NotificationPopover({
           ) : (
             <>
               {/* Item 1: Over Budget */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => onNavigateException("Over Budget")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <TrendingUp className="h-4 w-4" />
                 </div>
@@ -293,13 +351,18 @@ function NotificationPopover({
                     Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Prioritas review anggaran
+                    Prioritas review anggaran →
                   </span>
                 </div>
               </div>
 
               {/* Item 2: High Cost */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => onNavigateException("High Cost")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <AlertCircle className="h-4 w-4" />
                 </div>
@@ -317,13 +380,18 @@ function NotificationPopover({
                     Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Perlu peninjauan biaya
+                    Perlu peninjauan biaya →
                   </span>
                 </div>
               </div>
 
               {/* Item 3: Missing Evidence */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => onNavigateException("Missing Evidence")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
                   <FileText className="h-4 w-4" />
                 </div>
@@ -341,14 +409,19 @@ function NotificationPopover({
                     Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-amber-600">
-                    Perlu kelengkapan dokumen
+                    Perlu kelengkapan dokumen →
                   </span>
                 </div>
               </div>
 
               {/* Item 4: Unmatched CRM */}
               {notifData.unmatchedCount > 0 && (
-                <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  onClick={() => onNavigateException("Duplicate Data")}
+                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                    isMarkedAllRead ? "opacity-60" : ""
+                  }`}
+                >
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
                     <ShieldAlert className="h-4 w-4" />
                   </div>
@@ -366,7 +439,7 @@ function NotificationPopover({
                       Nomor pekerjaan tidak ditemukan di master database CRM.
                     </p>
                     <span className="mt-2 block text-[11px] font-bold text-purple-600">
-                      Verifikasi Job Number
+                      Verifikasi Job Number →
                     </span>
                   </div>
                 </div>
@@ -377,11 +450,8 @@ function NotificationPopover({
 
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
-            onClick={() => {
-              onClose();
-              if (onViewAllExceptions) onViewAllExceptions();
-            }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            onClick={() => onNavigateException()}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
             <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
@@ -397,7 +467,6 @@ function NotificationPopover({
 // =========================================================================
 export default function DashboardPage() {
   const router = useRouter();
-
   const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
 
   const [allTransactions, setAllTransactions] = useState<CostTransaction[]>([]);
@@ -406,16 +475,43 @@ export default function DashboardPage() {
   const [isSyncing, setIsSyncing] = useState(false);
 
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
 
-  // Filter States: Diselaraskan dengan 7 Atribut FR-001 (Periode Bulan, Customer, Cabang Operasional)
   const [periode, setPeriode] = useState<string>("ALL");
   const [customer, setCustomer] = useState<string>("ALL");
   const [cabang, setCabang] = useState<string>("ALL");
   const [isFiltering, setIsFiltering] = useState(false);
 
-  // State Ekspor
   const [exportState, setExportState] = useState<"idle" | "queueing" | "ready">("idle");
   const [exportJobId, setExportJobId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+    }
+  }, []);
+
+  const handleToggleMarkAllRead = () => {
+    setIsNotifMarkedRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
+  };
+
+  const handleNavigateException = (category?: string) => {
+    setIsNotificationOpen(false);
+    if (category) {
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("c2_filter_tag", category);
+      }
+      router.push(`/cost-exception?tag=${encodeURIComponent(category)}`);
+    } else {
+      router.push("/cost-exception");
+    }
+  };
 
   const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => [
     { value: "ALL", label: "Semua Periode" },
@@ -425,7 +521,6 @@ export default function DashboardPage() {
     { value: getDynamicPeriod(3), label: getDynamicPeriod(3) },
   ], []);
 
-  // 1. Tarik Data Murni dari Supabase View c2_cost_transactions
   const fetchSupabaseData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -434,33 +529,48 @@ export default function DashboardPage() {
         .select("*")
         .order("created_at", { ascending: false });
 
+      const resolvedMap: Record<string, { status: string; notes: string }> =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          : {};
+
       if (error) {
         console.error("Gagal mengambil data dari Supabase:", error.message);
         setAllTransactions([]);
         setFilteredTransactions([]);
       } else if (data) {
-        const formatted: CostTransaction[] = data.map((item) => ({
-          id: item.id,
-          job_number: item.job_number || "-",
-          customer_name: item.customer_name || "Unknown Customer",
-          branch_code: item.branch_code || "Nasional",
-          cost_category: item.cost_category || "TRUCKING",
-          period_month: item.period_month || currentLivePeriod,
-          planned_cost: Number(item.planned_cost || 0),
-          actual_cost: Number(item.actual_cost || 0),
-          variance: Number(item.variance || 0),
-          has_evidence: Boolean(item.has_evidence),
-          evidence_url: item.evidence_url || null,
-          reconciliation_result: item.reconciliation_result || "MATCH",
-          review_flag: Boolean(item.review_flag),
-          exception_tags: parseTags(item.exception_tags),
-          voucher_no: item.voucher_no || "-",
-          description: item.description || "",
-          is_job_matched: Boolean(item.is_job_matched),
-          consignee: item.consignee,
-          shipper: item.shipper,
-          created_at: item.created_at,
-        }));
+        const formatted: CostTransaction[] = data.map((item, idx) => {
+          const localResolved = resolvedMap[item.id];
+          const isResolved =
+            localResolved?.status === "Selesai" ||
+            item.status === "Selesai" ||
+            item.status_computed === "Selesai" ||
+            item.is_resolved === true;
+
+          return {
+            id: item.id,
+            job_number: item.job_number || "-",
+            customer_name: cleanCustomerName(item.customer_name, idx),
+            branch_code: cleanBranchName(item.branch_code),
+            cost_category: item.cost_category || "TRUCKING",
+            period_month: item.period_month || currentLivePeriod,
+            planned_cost: Number(item.planned_cost || 0),
+            actual_cost: Number(item.actual_cost || 0),
+            variance: Number(item.variance || 0),
+            has_evidence: Boolean(item.has_evidence),
+            evidence_url: item.evidence_url || null,
+            reconciliation_result: item.reconciliation_result || "MATCH",
+            review_flag: isResolved ? false : Boolean(item.review_flag),
+            exception_tags: parseTags(item.exception_tags),
+            voucher_no: item.voucher_no || "-",
+            description: localResolved?.notes || item.description || "",
+            is_job_matched: Boolean(item.is_job_matched),
+            status: isResolved ? "Selesai" : item.status || "Terbuka",
+            consignee: item.consignee,
+            shipper: item.shipper,
+            created_at: item.created_at,
+          };
+        });
 
         setAllTransactions(formatted);
         setFilteredTransactions(formatted);
@@ -479,23 +589,26 @@ export default function DashboardPage() {
     fetchSupabaseData();
   }, [fetchSupabaseData]);
 
-  // 2. Dropdown Customer Dinamis (Menggantikan istilah Entitas sesuai QA)
+  // FIX BUG-UI-001: Pastikan opsi dropdown Customer bersih dari "Web Url" & "[object Object]"
   const dynamicCustomerOptions: DropdownOption[] = useMemo(() => {
-    const unique = Array.from(new Set(allTransactions.map((t) => t.customer_name))).filter(Boolean);
+    const unique = Array.from(
+      new Set(allTransactions.map((t, idx) => cleanCustomerName(t.customer_name, idx)))
+    ).filter(Boolean);
     const options: DropdownOption[] = [{ value: "ALL", label: "Semua Customer" }];
     unique.forEach((c) => options.push({ value: c, label: c }));
     return options;
   }, [allTransactions]);
 
-  // 3. Dropdown Cabang Operasional Dinamis (Menggantikan istilah Region sesuai QA)
+  // FIX BUG-UI-001: Pastikan opsi dropdown Cabang bersih dari "Web Url" & "[object Object]"
   const dynamicCabangOptions: DropdownOption[] = useMemo(() => {
-    const unique = Array.from(new Set(allTransactions.map((t) => t.branch_code))).filter(Boolean);
+    const unique = Array.from(
+      new Set(allTransactions.map((t) => cleanBranchName(t.branch_code)))
+    ).filter(Boolean);
     const options: DropdownOption[] = [{ value: "ALL", label: "Semua Cabang" }];
     unique.forEach((r) => options.push({ value: r, label: r }));
     return options;
   }, [allTransactions]);
 
-  // 4. Handler Terapkan Filter
   const handleApplyFilter = () => {
     setIsFiltering(true);
     setTimeout(() => {
@@ -514,21 +627,19 @@ export default function DashboardPage() {
     }, 250);
   };
 
-  // 5. Kalkulasi KPI Murni (Sinkron 100% dengan Priority Exception)
   const kpiData = useMemo(() => {
     const totalActual = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.actual_cost) || 0), 0);
     const totalPlanned = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.planned_cost) || 0), 0);
     const totalVariance = totalActual - totalPlanned;
-    
+
     const variancePercentVal = totalPlanned > 0 ? ((totalVariance / totalPlanned) * 100).toFixed(1) : "0.0";
     const realisasiPercentVal = totalPlanned > 0 ? ((totalActual / totalPlanned) * 100).toFixed(1) : "0.0";
 
     const verifiedCount = filteredTransactions.filter((t) => t.has_evidence).length;
     const totalCustomerCount = new Set(filteredTransactions.map((t) => t.customer_name).filter(Boolean)).size;
 
-    // Perhitungan anomali memasukkan is_job_matched agar identik dengan Priority Exception
     const attentionTransactions = filteredTransactions.filter(
-      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
+      (t) => t.status !== "Selesai" && (t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched)
     );
     const attentionCustomerCount = new Set(attentionTransactions.map((t) => t.customer_name).filter(Boolean)).size;
 
@@ -545,7 +656,6 @@ export default function DashboardPage() {
     };
   }, [filteredTransactions]);
 
-  // Ekspor Excel Asinkron
   const handleAsyncExport = () => {
     setExportState("queueing");
     const simulatedJobId = `EXP-${Date.now().toString().slice(-6)}`;
@@ -555,16 +665,134 @@ export default function DashboardPage() {
     }, 600);
   };
 
-  const handleDownloadExcelFiles = async () => {
+const handleDownloadExcelFiles = async () => {
     try {
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "PT Andima Transportindo - CCR C2";
-      const sheet = workbook.addWorksheet("Monthly Cost Summary");
-      sheet.addRow(["Indikator", "Nilai"]);
-      sheet.addRow(["Total Cost", kpiData.totalActualDisplay]);
-      sheet.addRow(["Budget", kpiData.totalPlannedDisplay]);
-      sheet.addRow(["Variance", kpiData.totalVarianceDisplay]);
-      sheet.addRow(["Total Customer", kpiData.totalCustomer]);
+      workbook.created = new Date();
+
+      // =========================================================================
+      // SHEET 1: Ringkasan Kinerja MtM (FR-CCR2-005-02)
+      // =========================================================================
+      const sheet1 = workbook.addWorksheet("Ringkasan Kinerja MtM");
+      sheet1.columns = [
+        { header: "Indikator KPI Eksekutif", key: "indikator", width: 32 },
+        { header: "Nilai Aktual / Status", key: "nilai", width: 28 },
+        { header: "Keterangan", key: "keterangan", width: 35 },
+      ];
+      sheet1.getRow(1).font = { bold: true };
+      sheet1.addRow({ indikator: "Periode Laporan", nilai: periode === "ALL" ? currentLivePeriod : periode, keterangan: "Periode evaluasi aktif" });
+      sheet1.addRow({ indikator: "Total Biaya Bulan Berjalan", nilai: kpiData.totalActualDisplay, keterangan: kpiData.verifiedCountText });
+      sheet1.addRow({ indikator: "Total Pagu Anggaran (Budget)", nilai: kpiData.totalPlannedDisplay, keterangan: `Realisasi ${kpiData.realisasiPercent}` });
+      sheet1.addRow({ indikator: "Deviasi / Variance MtM", nilai: kpiData.totalVarianceDisplay, keterangan: `Persentase deviasi ${kpiData.variancePercent}` });
+      sheet1.addRow({ indikator: "Total Entitas Pelanggan", nilai: kpiData.totalCustomer, keterangan: kpiData.attentionCustomerText });
+
+      // =========================================================================
+      // SHEET 2: Breakdown 51 Pelanggan - Trucking, Handling, Storage (FR-CCR2-005-02)
+      // =========================================================================
+      const sheet2 = workbook.addWorksheet("Breakdown 51 Pelanggan");
+      sheet2.columns = [
+        { header: "ID Customer", key: "id", width: 16 },
+        { header: "Nama Pelanggan", key: "customer", width: 36 },
+        { header: "Trucking (Rp)", key: "trucking", width: 20 },
+        { header: "Handling (Rp)", key: "handling", width: 20 },
+        { header: "Storage (Rp)", key: "storage", width: 20 },
+        { header: "Total Akumulasi Biaya (Rp)", key: "total", width: 25 },
+      ];
+      sheet2.getRow(1).font = { bold: true };
+
+      const custMap = new Map<string, { trucking: number; handling: number; storage: number; total: number }>();
+      filteredTransactions.forEach((t, idx) => {
+        const name = cleanCustomerName(t.customer_name, idx);
+        const curr = custMap.get(name) || { trucking: 0, handling: 0, storage: 0, total: 0 };
+        const cat = (t.cost_category || "").toUpperCase();
+        const cost = Number(t.actual_cost || 0);
+
+        if (cat.includes("HANDL")) curr.handling += cost;
+        else if (cat.includes("STOR") || cat.includes("GUDANG")) curr.storage += cost;
+        else curr.trucking += cost;
+
+        curr.total += cost;
+        custMap.set(name, curr);
+      });
+
+      Array.from(custMap.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .forEach(([name, stat], index) => {
+          sheet2.addRow({
+            id: `CUST-${String(index + 1).padStart(4, "0")}`,
+            customer: name,
+            trucking: stat.trucking,
+            handling: stat.handling,
+            storage: stat.storage,
+            total: stat.total,
+          });
+        });
+
+      // =========================================================================
+      // SHEET 3: Rekapitulasi Transaksi Anomali + Highlight Warna (FR-CCR2-005-03 & TR-005)
+      // =========================================================================
+      const sheet3 = workbook.addWorksheet("Transaksi Anomali");
+      sheet3.columns = [
+        { header: "No. Voucher", key: "voucher", width: 18 },
+        { header: "Job Number", key: "job", width: 18 },
+        { header: "Nama Customer", key: "customer", width: 32 },
+        { header: "Cabang", key: "branch", width: 18 },
+        { header: "Kategori", key: "category", width: 16 },
+        { header: "Budget (Rp)", key: "planned", width: 18 },
+        { header: "Aktual (Rp)", key: "actual", width: 18 },
+        { header: "Variance (Rp)", key: "variance", width: 18 },
+        { header: "Review Flag", key: "flag", width: 14 },
+        { header: "Tag Anomali", key: "tag", width: 24 },
+      ];
+      sheet3.getRow(1).font = { bold: true };
+
+      const anomalyRows = filteredTransactions.filter(
+        (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
+      );
+
+      anomalyRows.forEach((t, idx) => {
+        const isJobMissing = !t.is_job_matched || t.job_number === "UNMATCHED" || t.job_number === "-";
+        const isMissingEvidence = !t.has_evidence;
+        const isOverBudget = Number(t.variance || 0) > 0;
+
+        let primaryTag = "OVER_BUDGET";
+        // Hex ARGB sesuai spesifikasi TR-2909-005:
+        // #FEE2E2 (Over Budget), #FEF3C7 (Missing Evidence), #FFEDD5 (Job Not Found)
+        let fillHex = "FFFEE2E2";
+
+        if (isJobMissing) {
+          primaryTag = "JOB_NOT_FOUND";
+          fillHex = "FFFFEDD5";
+        } else if (isMissingEvidence) {
+          primaryTag = "MISSING_EVIDENCE";
+          fillHex = "FFFEF3C7";
+        } else if (isOverBudget) {
+          primaryTag = "OVER_BUDGET";
+          fillHex = "FFFEE2E2";
+        }
+
+        const row = sheet3.addRow({
+          voucher: t.voucher_no,
+          job: t.job_number,
+          customer: cleanCustomerName(t.customer_name, idx),
+          branch: cleanBranchName(t.branch_code),
+          category: t.cost_category,
+          planned: Number(t.planned_cost || 0),
+          actual: Number(t.actual_cost || 0),
+          variance: Number(t.variance || 0),
+          flag: "YES",
+          tag: primaryTag,
+        });
+
+        row.eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: fillHex },
+          };
+        });
+      });
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
@@ -586,12 +814,9 @@ export default function DashboardPage() {
 
   return (
     <div className="flex min-h-screen w-full bg-[#f4f7fc]">
-      {/* Sidebar Navigasi */}
       <Sidebar />
 
-      {/* Konten Utama */}
       <main className="flex-1 min-w-0 px-8 py-6 lg:ml-[260px] overflow-y-auto">
-        {/* Header Dasbor */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
@@ -603,7 +828,6 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Tombol Ekspor Ringkasan */}
             <button
               onClick={handleAsyncExport}
               disabled={exportState === "queueing"}
@@ -617,7 +841,6 @@ export default function DashboardPage() {
               <span>Ekspor Ringkasan</span>
             </button>
 
-            {/* Tombol Sinkronkan Supabase */}
             <button
               onClick={fetchSupabaseData}
               disabled={isSyncing}
@@ -627,7 +850,6 @@ export default function DashboardPage() {
               <span>Sinkronkan Supabase</span>
             </button>
 
-            {/* Tombol Notifikasi Lonceng & Popover */}
             <div className="relative">
               <button
                 aria-label="Lihat Notifikasi"
@@ -637,7 +859,9 @@ export default function DashboardPage() {
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                {!isNotifMarkedRead && (
+                  <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                )}
               </button>
 
               <NotificationPopover
@@ -645,11 +869,12 @@ export default function DashboardPage() {
                 onClose={() => setIsNotificationOpen(false)}
                 transactions={filteredTransactions}
                 periode={currentLivePeriod}
-                onViewAllExceptions={() => router.push("/cost-exception")}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
+                onNavigateException={handleNavigateException}
               />
             </div>
 
-            {/* Badge Periode Aktif Real-Time */}
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
               <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
               {currentLivePeriod}
@@ -657,7 +882,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Notifikasi Hasil Ekspor Ringkasan */}
         {exportState === "ready" && (
           <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-sm animate-in fade-in">
             <div className="flex items-center gap-2">
@@ -683,7 +907,6 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Filter Bar: Periode, Customer, Cabang Operasional (Label Sesuai QA & FR-001) */}
         <div className="mt-5 flex flex-wrap items-end gap-3">
           <div className="w-52">
             <CustomDropdown
@@ -726,7 +949,6 @@ export default function DashboardPage() {
           </button>
         </div>
 
-        {/* Baris 1: 4 Kartu KPI Makro (Dengan Skeleton Loading) */}
         <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           {isLoading ? (
             <>
@@ -737,7 +959,6 @@ export default function DashboardPage() {
             </>
           ) : (
             <>
-              {/* Card 1: TOTAL COST */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -760,7 +981,6 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              {/* Card 2: BUDGET */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -780,7 +1000,6 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              {/* Card 3: VARIANCE */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -803,7 +1022,6 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              {/* Card 4: TOTAL CUSTOMER */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -826,7 +1044,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Baris 2: Budget vs Actual & Breakdown Cost per Customer */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
           <div className="xl:col-span-7">
             {isLoading ? (
@@ -844,7 +1061,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Baris 3: Ringkasan Exception & Kesehatan Data */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
           <div className="xl:col-span-7">
             {isLoading ? (

@@ -24,18 +24,40 @@ export default function NotificationPopover({
   isOpen,
   onClose,
   transactions = [],
-  periode = "September 2026",
+  periode = "Oktober 2026",
   onViewAllExceptions,
 }: NotificationPopoverProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
   const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
-  // State cadangan jika props transactions belum terisi dari komponen induk
   const [dbTransactions, setDbTransactions] = useState<CostTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Tarik data langsung dari Supabase jika props transactions kosong saat popover dibuka
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsMarkedAllRead(localStorage.getItem("c2_notif_read") === "true");
+    }
+  }, [isOpen]);
+
+  const handleToggleRead = () => {
+    setIsMarkedAllRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
+  };
+
+  const handleCardClick = (tag: string) => {
+    onClose();
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("c2_filter_tag", tag);
+    }
+    router.push(`/cost-exception?tag=${encodeURIComponent(tag)}`);
+  };
+
   useEffect(() => {
     if (transactions && transactions.length > 0) {
       setDbTransactions(transactions);
@@ -61,9 +83,10 @@ export default function NotificationPopover({
     }
   }, [transactions, isOpen]);
 
-  // Kalkulasi 100% Real-Time dari Database Supabase (Tanpa Hardcoded Fallback)
   const notifData = useMemo(() => {
-    const activeList = dbTransactions.length > 0 ? dbTransactions : transactions;
+    const activeList = (dbTransactions.length > 0 ? dbTransactions : transactions).filter(
+      (t: any) => t.status !== "Selesai"
+    );
 
     if (!activeList || activeList.length === 0) {
       return {
@@ -88,17 +111,14 @@ export default function NotificationPopover({
       const actual = Number(t.actual_cost || 0);
       const variance = Number(t.variance || 0);
 
-      // 1. Over Budget: variance > 0 atau tag OVER_BUDGET
       if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
         overBudget++;
         overBudgetSum += actual;
       }
-      // 2. High Cost: Biaya tunggal >= Rp 50.000.000 atau tag HIGH_COST
       if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
         highCost++;
         highCostSum += actual;
       }
-      // 3. Missing Evidence: has_evidence == false atau tag MISSING_EVIDENCE
       if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
         missingEvidence++;
         missingEvidenceSum += actual;
@@ -119,7 +139,6 @@ export default function NotificationPopover({
       })} jt`;
     };
 
-    // Total unik transaksi anomali yang membutuhkan tindakan perbaikan
     const totalExceptions = activeList.filter(
       (t: any) =>
         t.review_flag ||
@@ -144,30 +163,18 @@ export default function NotificationPopover({
 
   return (
     <>
-      {/* Backdrop Transparan untuk Klik di Luar Popover */}
-      <div
-        className="fixed inset-0 z-40 bg-black/5"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 z-40 bg-black/5" onClick={onClose} />
 
-      {/* Kontainer Popover Notifikasi */}
       <div className="absolute right-8 top-16 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl transition-all duration-200 animate-in fade-in slide-in-from-top-2 text-left">
-        {/* Header Notifikasi */}
         <div className="p-5 pb-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {/* Titik Biru Status (Berubah Abu jika Semua Ditandai Dibaca) */}
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  isMarkedAllRead || notifData.totalExceptions === 0
-                    ? "bg-slate-300"
-                    : "bg-[#0a7ebf]"
-                }`}
-              />
+              {!isMarkedAllRead && notifData.totalExceptions > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
 
-            {/* Tombol Tutup Silang */}
             <button
               onClick={onClose}
               className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
@@ -177,20 +184,19 @@ export default function NotificationPopover({
           </div>
 
           <p className="mt-2 text-xs font-bold text-slate-800">
-            {notifData.totalExceptions} exception perlu tindak lanjut
+            {isMarkedAllRead ? 0 : notifData.totalExceptions} exception perlu tindak lanjut
           </p>
           <p className="mt-0.5 text-[11px] text-slate-400">
             Ringkasan exception · {periode}
           </p>
 
           <button
-            onClick={() => setIsMarkedAllRead((prev) => !prev)}
+            onClick={handleToggleRead}
             className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
             {isMarkedAllRead ? "Tandai belum dibaca" : "Tandai semua dibaca"}
           </button>
 
-          {/* Tab Filter: Semua & Belum Dibaca */}
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
@@ -215,7 +221,6 @@ export default function NotificationPopover({
           </div>
         </div>
 
-        {/* Daftar Item Notifikasi */}
         <div className="max-h-[380px] overflow-y-auto divide-y divide-slate-100">
           {isLoading ? (
             <div className="space-y-4 p-5">
@@ -243,8 +248,12 @@ export default function NotificationPopover({
             </div>
           ) : (
             <>
-              {/* Item 1: Over Budget */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => handleCardClick("Over Budget")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <TrendingUp className="h-4 w-4" />
                 </div>
@@ -262,13 +271,17 @@ export default function NotificationPopover({
                     Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Prioritas review anggaran
+                    Prioritas review anggaran →
                   </span>
                 </div>
               </div>
 
-              {/* Item 2: High Cost */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => handleCardClick("High Cost")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
                   <AlertCircle className="h-4 w-4" />
                 </div>
@@ -286,13 +299,17 @@ export default function NotificationPopover({
                     Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Perlu peninjauan biaya
+                    Perlu peninjauan biaya →
                   </span>
                 </div>
               </div>
 
-              {/* Item 3: Missing Evidence */}
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+              <div
+                onClick={() => handleCardClick("Missing Evidence")}
+                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                  isMarkedAllRead ? "opacity-60" : ""
+                }`}
+              >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
                   <FileText className="h-4 w-4" />
                 </div>
@@ -310,7 +327,7 @@ export default function NotificationPopover({
                     Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.
                   </p>
                   <span className="mt-2 block text-[11px] font-bold text-amber-600">
-                    Perlu kelengkapan dokumen
+                    Perlu kelengkapan dokumen →
                   </span>
                 </div>
               </div>
@@ -318,7 +335,6 @@ export default function NotificationPopover({
           )}
         </div>
 
-        {/* Footer Popover: Tombol Lihat Semua Exception */}
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
             onClick={() => {

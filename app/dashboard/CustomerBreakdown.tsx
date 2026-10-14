@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import StatusBadge, { type Tone } from "./StatusBadge";
-import { CostTransaction } from "./page";
+import { CostTransaction, cleanCustomerName } from "./page";
 
 interface Customer {
   name: string;
@@ -18,39 +18,44 @@ interface CustomerBreakdownProps {
 }
 
 export default function CustomerBreakdown({ transactions = [] }: CustomerBreakdownProps) {
-  // Nilai cadangan jika tabel Supabase belum terisi
-  const defaultCustomers: Customer[] = [
-    { name: "PT Nusantara Retail", value: "Rp 324,8 jt", delta: "41,2%", tone: "info", width: "100%", barClass: "bg-[#0a7ebf]" },
-    { name: "PT Sinar Logistik", value: "Rp 271,5 jt", delta: "26,5%", tone: "info", width: "83%", barClass: "bg-[#0a7ebf]" },
-    { name: "CV Maju Bersama", value: "Rp 198,2 jt", delta: "18,4%", tone: "info", width: "61%", barClass: "bg-[#0a7ebf]" },
-    { name: "PT Garuda Teknologi", value: "Rp 158,7 jt", delta: "13,9%", tone: "info", width: "49%", barClass: "bg-[#0a7ebf]" },
-  ];
+  // Hitung dinamis kontribusi 4 customer utama dari transaksi terfilter
+  const customers = useMemo((): Customer[] => {
+    if (!transactions.length) return [];
 
-  // Hitung dinamis kontribusi per customer dari database Supabase
-  const customers = useMemo(() => {
-    if (!transactions.length) return defaultCustomers;
-
-    const grandTotalActual = transactions.reduce((acc, t) => acc + (Number(t.actual_cost) || 0), 0);
-
-    const map = new Map<string, { actual: number; planned: number }>();
-    transactions.forEach((t) => {
-      const name = t.customer_name || "Unknown Customer";
-      const current = map.get(name) || { actual: 0, planned: 0 };
-      map.set(name, {
+    const map = new Map<string, { displayName: string; actual: number; planned: number }>();
+    transactions.forEach((t, idx) => {
+      const rawName = cleanCustomerName(t.customer_name, idx);
+      const key = rawName.toUpperCase();
+      const current = map.get(key) || { displayName: rawName, actual: 0, planned: 0 };
+      map.set(key, {
+        displayName: current.displayName,
         actual: current.actual + (Number(t.actual_cost) || 0),
         planned: current.planned + (Number(t.planned_cost) || 0),
       });
     });
 
-    const list = Array.from(map.entries()).map(([name, val]) => {
-      // 1. Hitung kontribusi terhadap total biaya perusahaan (%)
-      const sharePct = grandTotalActual > 0 ? (val.actual / grandTotalActual) * 100 : 0;
+    // Ambil 4 customer dengan nilai realisasi terbesar
+    const sortedTop4 = Array.from(map.values())
+      .sort((a, b) => b.actual - a.actual)
+      .slice(0, 4);
 
-      // 2. Cek apakah ada over budget pada customer ini
+    // Hitung total dari customer yang ditampilkan agar total persentasenya tepat 100,0%
+    const top4TotalActual = sortedTop4.reduce((acc, item) => acc + item.actual, 0);
+    const maxVal = sortedTop4[0]?.actual || 1;
+
+    const rawPcts = sortedTop4.map((val) =>
+      top4TotalActual > 0 ? Number(((val.actual / top4TotalActual) * 100).toFixed(1)) : 0
+    );
+    if (rawPcts.length > 0 && top4TotalActual > 0) {
+      const sumOthers = rawPcts.slice(0, -1).reduce((a, b) => a + b, 0);
+      rawPcts[rawPcts.length - 1] = Number(Math.max(0, 100 - sumOthers).toFixed(1));
+    }
+
+    return sortedTop4.map((val, idx) => {
+      const sharePct = rawPcts[idx] ?? 0;
       const variance = val.actual - val.planned;
       const isOverBudget = variance > 0;
 
-      // Format tampilan badge kontribusi
       const badgeText = `${sharePct.toFixed(1).replace(".", ",")}%`;
       const tone: Tone = isOverBudget ? "danger" : "info";
 
@@ -68,23 +73,14 @@ export default function CustomerBreakdown({ transactions = [] }: CustomerBreakdo
       }
 
       return {
-        name,
-        actual: val.actual,
+        name: val.displayName,
         value: formattedValue,
         delta: badgeText,
         tone,
         barClass: isOverBudget ? "bg-[#d4194f]" : "bg-[#0a7ebf]",
+        width: `${Math.max(15, Math.round((val.actual / maxVal) * 100))}%`,
       };
     });
-
-    // Urutkan customer dari nilai realisasi terbesar
-    list.sort((a, b) => b.actual - a.actual);
-    const maxVal = list[0]?.actual || 1;
-
-    return list.slice(0, 4).map((item) => ({
-      ...item,
-      width: `${Math.max(15, Math.round((item.actual / maxVal) * 100))}%`,
-    }));
   }, [transactions]);
 
   return (
@@ -92,24 +88,32 @@ export default function CustomerBreakdown({ transactions = [] }: CustomerBreakdo
       <h3 className="text-sm font-bold text-slate-900">Breakdown Cost per Customer</h3>
       <p className="text-[11px] text-slate-400">Kontribusi terhadap total cost</p>
 
-      <div className="mt-5 flex flex-1 flex-col justify-between gap-4">
-        {customers.map((c) => (
-          <div key={c.name}>
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[13px] font-semibold text-slate-700 truncate max-w-[200px]" title={c.name}>
-                {c.name}
-              </p>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-bold text-slate-900">{c.value}</span>
-                <StatusBadge value={c.delta} tone={c.tone} />
+      {customers.length === 0 ? (
+        <div className="mt-5 flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center">
+          <p className="text-xs text-slate-400">
+            Tidak ada data transaksi untuk kombinasi filter Customer dan Cabang Operasional ini.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-5 flex flex-1 flex-col justify-between gap-4">
+          {customers.map((c) => (
+            <div key={c.name}>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[13px] font-semibold text-slate-700 truncate max-w-[200px]" title={c.name}>
+                  {c.name}
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[13px] font-bold text-slate-900">{c.value}</span>
+                  <StatusBadge value={c.delta} tone={c.tone} />
+                </div>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-slate-100">
+                <div className={`h-1.5 rounded-full ${c.barClass}`} style={{ width: c.width }} />
               </div>
             </div>
-            <div className="mt-2 h-1.5 rounded-full bg-slate-100">
-              <div className={`h-1.5 rounded-full ${c.barClass}`} style={{ width: c.width }} />
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

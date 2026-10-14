@@ -19,12 +19,42 @@ interface AnomalyCardData {
   targetFilterTag?: string;
 }
 
+// Helper klasifikasi tunggal agar 100% identik dengan halaman Cost Exception & Priority Exception
+export function classifyTransactionAnomaly(t: CostTransaction, varianceThresholdPct = 0, highCostLimit = 50_000_000) {
+  const actual = Number(t.actual_cost || 0);
+  const planned = Number(t.planned_cost || 0);
+  const variance = Number(t.variance !== undefined && t.variance !== null ? t.variance : actual - planned);
+  const job = String(t.job_number || "").trim();
+
+  const isUnmatched =
+    !t.is_job_matched ||
+    job === "" ||
+    job === "-" ||
+    job === "UNMATCHED" ||
+    job === "JOB-UNKNOWN-001" ||
+    t.exception_tags?.includes("JOB_NOT_FOUND") ||
+    t.exception_tags?.includes("DUPLICATE_DATA");
+
+  const isHighCost = actual >= highCostLimit || t.exception_tags?.includes("HIGH_COST");
+
+  const isOverBudget =
+    (variance > 0 && (varianceThresholdPct <= 0 || planned === 0 || variance > (planned * varianceThresholdPct) / 100)) ||
+    t.exception_tags?.includes("OVER_BUDGET");
+
+  const isMissingEvidence = !t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE");
+
+  if (isUnmatched) return "Duplicate Data";
+  if (isHighCost) return "High Cost";
+  if (isOverBudget) return "Over Budget";
+  if (isMissingEvidence) return "Missing Evidence";
+  return null; // Transaksi Normal (MATCH)
+}
+
 export default function ExceptionSummary({ transactions = [] }: ExceptionSummaryProps) {
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [currentTime, setCurrentTime] = useState<number>(0);
 
-  // Mengambil waktu saat komponen dimuat di sisi klien agar fungsi render tetap murni (pure)
   useEffect(() => {
     setCurrentTime(Date.now());
   }, []);
@@ -37,7 +67,12 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     })} jt`;
   };
 
-  // 1. HALAMAN 1: 4 Kategori Anomali Pokok
+  // Hanya ambil transaksi yang benar-benar memiliki anomali (abaikan 14 transaksi normal MATCH)
+  const realAnomalies = useMemo(() => {
+    return transactions.filter((t) => classifyTransactionAnomaly(t) !== null);
+  }, [transactions]);
+
+  // 1. HALAMAN 1: 4 Kategori Anomali Pokok (Sinkron 100% dengan Cost Exception)
   const dynamicPage1Cards = useMemo((): AnomalyCardData[] => {
     let overBudgetCount = 0;
     let overBudgetSum = 0;
@@ -48,23 +83,22 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
     let unmatchedCount = 0;
     let unmatchedSum = 0;
 
-    transactions.forEach((t) => {
+    realAnomalies.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
-      const planned = Number(t.planned_cost || 0);
-      const variance = Number(t.variance || (actual - planned));
+      const category = classifyTransactionAnomaly(t);
 
-      if (!t.is_job_matched || t.job_number === "UNMATCHED" || t.job_number === "-" || !t.job_number) {
+      if (category === "Duplicate Data") {
         unmatchedCount++;
         unmatchedSum += actual;
-      } else if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
-        missingEvidenceCount++;
-        missingEvidenceSum += actual;
-      } else if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
-        overBudgetCount++;
-        overBudgetSum += actual;
-      } else if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
+      } else if (category === "High Cost") {
         highCostCount++;
         highCostSum += actual;
+      } else if (category === "Over Budget") {
+        overBudgetCount++;
+        overBudgetSum += actual;
+      } else if (category === "Missing Evidence") {
+        missingEvidenceCount++;
+        missingEvidenceSum += actual;
       }
     });
 
@@ -106,30 +140,29 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         targetFilterTag: "Duplicate Data",
       },
     ];
-  }, [transactions]);
+  }, [realAnomalies]);
 
-  // 2. HALAMAN 2 S.D. 5: Murni Dihitung dari Data Transaksi Riil
+  // 2. HALAMAN 2 S.D. 5: Murni Dihitung dari Data Transaksi Anomali Riil
   const pagesData: Record<number, AnomalyCardData[]> = useMemo(() => {
     const now = currentTime || 0;
 
-    // Halaman 2: Dimensi SLA & Risiko Finansial
     let slaOverdueCount = 0;
     let slaOverdueSum = 0;
     let highVarianceCount = 0;
     let highVarianceSum = 0;
 
-    transactions.forEach((t) => {
+    realAnomalies.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
       const planned = Number(t.planned_cost || 0);
-      const variance = Number(t.variance || (actual - planned));
+      const variance = Number(t.variance || actual - planned);
       const createdTime = t.created_at ? new Date(t.created_at).getTime() : now;
-      const isOver24h = now > 0 && (now - createdTime) > 24 * 60 * 60 * 1000;
+      const isOver24h = now > 0 && now - createdTime > 24 * 60 * 60 * 1000 && t.status !== "Selesai";
 
-      if (isOver24h && (t.review_flag || variance > 0 || !t.has_evidence || !t.is_job_matched)) {
+      if (isOver24h) {
         slaOverdueCount++;
         slaOverdueSum += actual;
       }
-      if (planned > 0 && (variance / planned) > 0.05) {
+      if (planned > 0 && variance / planned > 0.05) {
         highVarianceCount++;
         highVarianceSum += actual;
       }
@@ -143,10 +176,10 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         title: "> 24 Jam Overdue",
         nominal: formatJt(slaOverdueSum),
         statusText: slaOverdueCount > 0 ? "Prioritas Kritis SLA" : "SLA Aman",
-        targetFilterTag: "Critical",
+        targetFilterTag: "Semua Tipe",
       },
-      dynamicPage1Cards[3], // Unmatched CRM
-      dynamicPage1Cards[2], // Missing Evidence
+      dynamicPage1Cards[3],
+      dynamicPage1Cards[2],
       {
         badge: highVarianceCount,
         badgeBg: "bg-[#f3e8ff]",
@@ -158,7 +191,6 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 3: Dimensi Kategori Biaya Operasional
     const catMap: Record<string, { c: number; s: number }> = {
       TRUCKING: { c: 0, s: 0 },
       HANDLING: { c: 0, s: 0 },
@@ -166,16 +198,22 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       OPERATIONAL: { c: 0, s: 0 },
     };
 
-    transactions.forEach((t) => {
+    realAnomalies.forEach((t) => {
       const cat = (t.cost_category || "OPERATIONAL").toUpperCase();
       const actual = Number(t.actual_cost || 0);
-      const isAnomaly = t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched;
 
-      if (isAnomaly) {
-        if (cat.includes("TRUCK")) { catMap.TRUCKING.c++; catMap.TRUCKING.s += actual; }
-        else if (cat.includes("HANDL")) { catMap.HANDLING.c++; catMap.HANDLING.s += actual; }
-        else if (cat.includes("STOR")) { catMap.STORAGE.c++; catMap.STORAGE.s += actual; }
-        else { catMap.OPERATIONAL.c++; catMap.OPERATIONAL.s += actual; }
+      if (cat.includes("TRUCK")) {
+        catMap.TRUCKING.c++;
+        catMap.TRUCKING.s += actual;
+      } else if (cat.includes("HANDL")) {
+        catMap.HANDLING.c++;
+        catMap.HANDLING.s += actual;
+      } else if (cat.includes("STOR")) {
+        catMap.STORAGE.c++;
+        catMap.STORAGE.s += actual;
+      } else {
+        catMap.OPERATIONAL.c++;
+        catMap.OPERATIONAL.s += actual;
       }
     });
 
@@ -218,13 +256,12 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 4: Dimensi Kelengkapan Bukti & Kesiapan Audit
     let verifiedCount = 0;
     let verifiedSum = 0;
     let unverifiedCount = 0;
     let unverifiedSum = 0;
 
-    transactions.forEach((t) => {
+    realAnomalies.forEach((t) => {
       const actual = Number(t.actual_cost || 0);
       if (t.has_evidence) {
         verifiedCount++;
@@ -274,7 +311,6 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       },
     ];
 
-    // Halaman 5: Dimensi Cabang Operasional (FR-001)
     const branchMap: Record<string, { c: number; s: number }> = {
       JKT: { c: 0, s: 0 },
       SBY: { c: 0, s: 0 },
@@ -282,16 +318,22 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       NAS: { c: 0, s: 0 },
     };
 
-    transactions.forEach((t) => {
+    realAnomalies.forEach((t) => {
       const b = (t.branch_code || "").toLowerCase();
       const actual = Number(t.actual_cost || 0);
-      const isAnomaly = t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched;
 
-      if (isAnomaly) {
-        if (b.includes("jakarta")) { branchMap.JKT.c++; branchMap.JKT.s += actual; }
-        else if (b.includes("surabaya")) { branchMap.SBY.c++; branchMap.SBY.s += actual; }
-        else if (b.includes("semarang")) { branchMap.SMG.c++; branchMap.SMG.s += actual; }
-        else { branchMap.NAS.c++; branchMap.NAS.s += actual; }
+      if (b.includes("jakarta")) {
+        branchMap.JKT.c++;
+        branchMap.JKT.s += actual;
+      } else if (b.includes("surabaya")) {
+        branchMap.SBY.c++;
+        branchMap.SBY.s += actual;
+      } else if (b.includes("semarang")) {
+        branchMap.SMG.c++;
+        branchMap.SMG.s += actual;
+      } else {
+        branchMap.NAS.c++;
+        branchMap.NAS.s += actual;
       }
     });
 
@@ -302,7 +344,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#e11d48]",
         title: "Jakarta Pusat",
         nominal: formatJt(branchMap.JKT.s),
-        statusText: `${branchMap.JKT.c} item aktif`,
+        statusText: `${branchMap.JKT.c} item anomali`,
         targetFilterTag: "Over Budget",
       },
       {
@@ -311,7 +353,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#e11d48]",
         title: "Surabaya",
         nominal: formatJt(branchMap.SBY.s),
-        statusText: `${branchMap.SBY.c} item aktif`,
+        statusText: `${branchMap.SBY.c} item anomali`,
         targetFilterTag: "High Cost",
       },
       {
@@ -320,7 +362,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#d97706]",
         title: "Semarang",
         nominal: formatJt(branchMap.SMG.s),
-        statusText: `${branchMap.SMG.c} item aktif`,
+        statusText: `${branchMap.SMG.c} item anomali`,
         targetFilterTag: "Missing Evidence",
       },
       {
@@ -329,7 +371,7 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         badgeTextColor: "text-[#9333ea]",
         title: "Cabang Lainnya",
         nominal: formatJt(branchMap.NAS.s),
-        statusText: `${branchMap.NAS.c} item aktif`,
+        statusText: `${branchMap.NAS.c} item anomali`,
         targetFilterTag: "Duplicate Data",
       },
     ];
@@ -341,14 +383,10 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
       4: page4,
       5: page5,
     };
-  }, [transactions, dynamicPage1Cards, currentTime]);
+  }, [realAnomalies, dynamicPage1Cards, currentTime]);
 
-  // Total Item Anomali Riil
-  const totalItemCount = useMemo(() => {
-    return transactions.filter(
-      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
-    ).length;
-  }, [transactions]);
+  // Total Item Anomali Riil (Sama persis dengan penjumlahan ke-4 kartu!)
+  const totalItemCount = realAnomalies.length;
 
   const displayedCards = pagesData[currentPage] || pagesData[1];
 
@@ -396,7 +434,12 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
         {displayedCards.map((card, idx) => (
           <div
             key={`${card.title}-${idx}`}
-            onClick={() => router.push("/cost-exception")}
+            onClick={() => {
+              if (typeof window !== "undefined" && card.targetFilterTag) {
+                sessionStorage.setItem("c2_filter_tag", card.targetFilterTag);
+              }
+              router.push("/cost-exception");
+            }}
             className="cursor-pointer rounded-xl bg-[#f8fafc] p-4 transition-all duration-200 hover:bg-slate-100/90 hover:shadow-xs active:scale-[0.99]"
             title={`Klik untuk meninjau ${card.title}`}
           >

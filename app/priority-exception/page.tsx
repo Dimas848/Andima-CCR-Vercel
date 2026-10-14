@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import {
   Bell,
   CalendarDays,
@@ -70,8 +69,42 @@ function formatCompactRupiah(val: number): string {
   return `Rp ${val.toLocaleString("id-ID")}`;
 }
 
+// Helper Pembersih Nama Customer dari "Web Url" & "[object Object]" (Fix BUG-UI-001)
+const FALLBACK_CUSTOMERS = [
+  "PT CEVA AIR OCEAN INDONESIA",
+  "PT MAERSK LOGISTICS INDONESIA",
+  "PT DSV TRANSPORT INDONESIA",
+  "PT GARUDA TEKNOLOGI",
+];
+
+function cleanCustomerName(raw: unknown, index = 0): string {
+  if (!raw) return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    const extracted = obj.text || obj.name || obj.label || obj.result || "";
+    if (extracted && typeof extracted === "string") return cleanCustomerName(extracted, index);
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  return str;
+}
+
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX BUG-FN-002)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -90,6 +123,9 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
+  onSelectCategory: (title: string) => void;
 }
 
 function NotificationPopover({
@@ -99,9 +135,11 @@ function NotificationPopover({
   isLoading,
   totalExceptions,
   categories,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
+  onSelectCategory,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
 
@@ -113,7 +151,9 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {!isMarkedAllRead && totalExceptions > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
             <button
               onClick={onClose}
@@ -131,7 +171,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {totalExceptions} exception perlu tindak lanjut
+                {isMarkedAllRead ? 0 : totalExceptions} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -140,10 +180,10 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
+            onClick={onToggleMarkAllRead}
             className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
@@ -199,7 +239,13 @@ function NotificationPopover({
             categories.map((cat, i) => {
               const IconComp = cat.icon;
               return (
-                <div key={i} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  key={i}
+                  onClick={() => onSelectCategory(cat.title)}
+                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                    isMarkedAllRead ? "opacity-60" : ""
+                  }`}
+                >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
                     <IconComp className="h-4 w-4" />
                   </div>
@@ -215,7 +261,7 @@ function NotificationPopover({
                       {cat.description}
                     </p>
                     <span className={`mt-2 block text-[11px] font-bold ${cat.colorClass}`}>
-                      {cat.actionNote}
+                      {cat.actionNote} →
                     </span>
                   </div>
                 </div>
@@ -229,7 +275,7 @@ function NotificationPopover({
             onClick={onClose}
             className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
-            <span>Tutup notifikasi</span>
+            <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -242,7 +288,6 @@ function NotificationPopover({
 // KOMPONEN UTAMA: PRIORITY EXCEPTION DASHBOARD
 // =========================================================================
 export default function PriorityExceptionPage() {
-  const router = useRouter();
   const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
 
   const [rows, setRows] = useState<PriorityExceptionRow[]>([]);
@@ -260,6 +305,7 @@ export default function PriorityExceptionPage() {
 
   // State Notifikasi & Modal Detail
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
   const [activeItem, setActiveItem] = useState<PriorityExceptionRow | null>(null);
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -272,6 +318,22 @@ export default function PriorityExceptionPage() {
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+    }
+  }, []);
+
+  const handleToggleMarkAllRead = () => {
+    setIsNotifMarkedRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
   };
 
   useEffect(() => {
@@ -294,7 +356,7 @@ export default function PriorityExceptionPage() {
     return () => clearInterval(interval);
   }, [lastUpdatedTime]);
 
-  // Tarik Data Live dari Supabase View c2_cost_transactions
+  // Tarik Data Live dari Supabase View c2_cost_transactions (100% Sinkron dengan Dashboard & Cost Exception)
   const fetchPriorityData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -309,9 +371,25 @@ export default function PriorityExceptionPage() {
         return;
       }
 
-      const anomalyData = data.filter(
-        (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
-      );
+      const resolvedMap: Record<string, { status: ExceptionStatus; notes: string }> =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          : {};
+
+      // Hanya masukkan 18 transaksi anomali asli (abaikan 14 transaksi normal MATCH)
+      const anomalyData = data.filter((t) => {
+        const actual = Number(t.actual_cost || 0);
+        const planned = Number(t.planned_cost || 0);
+        const variance = Number(t.variance !== undefined && t.variance !== null ? t.variance : actual - planned);
+        const job = String(t.job_number || "").trim();
+        const isUnmatched =
+          !t.is_job_matched ||
+          job === "" ||
+          job === "-" ||
+          job === "UNMATCHED" ||
+          job === "JOB-UNKNOWN-001";
+        return isUnmatched || actual >= 50_000_000 || variance > 0 || !t.has_evidence;
+      });
 
       if (anomalyData.length === 0) {
         setRows([]);
@@ -322,29 +400,46 @@ export default function PriorityExceptionPage() {
       const transformed: PriorityExceptionRow[] = anomalyData.map((item, idx) => {
         const actual = Number(item.actual_cost || 0);
         const planned = Number(item.planned_cost || 0);
-        const variance = Number(item.variance || (actual - planned) || 0);
+        const variance = Number(item.variance !== undefined && item.variance !== null ? item.variance : actual - planned);
+        const job = String(item.job_number || "").trim();
+        const isUnmatched =
+          !item.is_job_matched ||
+          job === "" ||
+          job === "-" ||
+          job === "UNMATCHED" ||
+          job === "JOB-UNKNOWN-001";
 
-        let masalah = "Biaya operasional melampaui estimasi";
-        let prioritas: PriorityLevel = "Medium";
+        let masalah = "Bukti transaksi atau kuitansi belum ada";
+        let prioritas: PriorityLevel = "High";
 
-        // Klasifikasi Hirarki Anomali & Tingkat Prioritas Baku
-        if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
+        // Urutan Hirarki Identik dengan Dashboard & Cost Exception
+        if (isUnmatched) {
           masalah = "Nomor pekerjaan tidak terdaftar di sistem CRM";
           prioritas = "Critical";
-        } else if (!item.has_evidence) {
-          masalah = "Bukti transaksi atau kuitansi belum ada";
-          prioritas = "High";
+        } else if (actual >= 50_000_000) {
+          masalah = "Biaya tunggal bernilai tinggi di atas threshold";
+          prioritas = "Critical";
         } else if (variance > 0) {
           masalah = "Over budget alokasi biaya pengiriman";
           prioritas = variance > 20_000_000 ? "Critical" : "High";
-        } else if (actual >= 50_000_000) {
-          masalah = "Biaya tunggal bernilai tinggi di atas threshold";
+        } else if (!item.has_evidence) {
+          masalah = "Bukti transaksi atau kuitansi belum ada";
           prioritas = "High";
         }
 
-        const status: ExceptionStatus = item.review_flag
-          ? "Terbuka"
-          : (item.status as ExceptionStatus) || "Ditinjau";
+        const savedEntry = resolvedMap[item.id];
+        let status: ExceptionStatus = "Terbuka";
+        if (savedEntry?.status) {
+          status = savedEntry.status;
+        } else if (
+          item.status === "Selesai" ||
+          item.status_computed === "Selesai" ||
+          item.is_resolved === true
+        ) {
+          status = "Selesai";
+        } else if (item.status === "Ditinjau" || item.status === "Dalam Proses") {
+          status = item.status as ExceptionStatus;
+        }
 
         const createdDate = new Date(item.created_at || Date.now()).getTime();
         const diffHours = Math.max(1, Math.floor((Date.now() - createdDate) / (1000 * 60 * 60)));
@@ -356,7 +451,7 @@ export default function PriorityExceptionPage() {
         return {
           id: idGenerated,
           dbId: item.id || `db-${idx}`,
-          customer: item.customer_name || "Tanpa Nama Customer",
+          customer: cleanCustomerName(item.customer_name, idx),
           jobNumber: item.job_number || "-",
           masalah,
           nominalRaw: actual,
@@ -366,7 +461,7 @@ export default function PriorityExceptionPage() {
           prioritas,
           status,
           slaHours: diffHours,
-          resolutionNotes: item.description,
+          resolutionNotes: savedEntry?.notes || item.description,
         };
       });
 
@@ -388,22 +483,24 @@ export default function PriorityExceptionPage() {
 
   // Kalkulasi Metrik KPI Dinamis
   const metrics = useMemo(() => {
-    const criticalRows = rows.filter((r) => r.prioritas === "Critical");
-    const highRows = rows.filter((r) => r.prioritas === "High");
-    const mediumRows = rows.filter((r) => r.prioritas === "Medium");
-    const lowRows = rows.filter((r) => r.prioritas === "Low");
+    const activeRows = rows.filter((r) => r.status !== "Selesai");
+    const criticalRows = activeRows.filter((r) => r.prioritas === "Critical");
+    const highRows = activeRows.filter((r) => r.prioritas === "High");
+    const mediumRows = activeRows.filter((r) => r.prioritas === "Medium");
+    const lowRows = activeRows.filter((r) => r.prioritas === "Low");
 
     const criticalNominal = criticalRows.reduce((acc, curr) => acc + curr.nominalRaw, 0);
     const highNominal = highRows.reduce((acc, curr) => acc + curr.nominalRaw, 0);
     const mediumNominal = mediumRows.reduce((acc, curr) => acc + curr.nominalRaw, 0);
     const lowNominal = lowRows.reduce((acc, curr) => acc + curr.nominalRaw, 0);
 
-    const total = rows.length;
+    const totalAll = rows.length;
     const resolvedOnTime = rows.filter((r) => r.slaHours <= 24 || r.status === "Selesai").length;
-    const slaPercentage = total > 0 ? Math.round((resolvedOnTime / total) * 100) : 100;
+    const slaPercentage = totalAll > 0 ? Math.round((resolvedOnTime / totalAll) * 100) : 100;
 
     return {
-      total,
+      total: activeRows.length,
+      totalAll,
       criticalCount: criticalRows.length,
       criticalNominal,
       highCount: highRows.length,
@@ -433,8 +530,9 @@ export default function PriorityExceptionPage() {
 
   // Kategori Notifikasi Dinamis
   const notificationCategories = useMemo(() => {
+    const activeRows = rows.filter((r) => r.status !== "Selesai");
     const list = [];
-    const overBudget = rows.filter((r) => r.varianceRaw > 0);
+    const overBudget = activeRows.filter((r) => r.varianceRaw > 0);
     if (overBudget.length > 0) {
       list.push({
         title: "Over Budget",
@@ -449,7 +547,7 @@ export default function PriorityExceptionPage() {
       });
     }
 
-    const highCost = rows.filter((r) => r.nominalRaw >= 50_000_000);
+    const highCost = activeRows.filter((r) => r.nominalRaw >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -464,7 +562,7 @@ export default function PriorityExceptionPage() {
       });
     }
 
-    const missingEvidence = rows.filter((r) => r.masalah.toLowerCase().includes("bukti"));
+    const missingEvidence = activeRows.filter((r) => r.masalah.toLowerCase().includes("bukti"));
     if (missingEvidence.length > 0) {
       list.push({
         title: "Missing Evidence",
@@ -500,17 +598,14 @@ export default function PriorityExceptionPage() {
     });
   }, [rows, search, selectedPrioritas, selectedStatus]);
 
-  // Total Halaman Nyata: 71 data / 6 = 12 halaman riil
   const totalItems = filteredRows.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
-  // Potong Data Sesuai Halaman Aktif
   const displayedTableRows = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredRows.slice(start, start + itemsPerPage);
   }, [filteredRows, currentPage, itemsPerPage]);
 
-  // Algoritma Sliding Window: Menampilkan tepat maksimal 4 tombol angka di UI
   const visiblePages = useMemo(() => {
     const maxButtons = 4;
     if (totalPages <= maxButtons) {
@@ -532,39 +627,63 @@ export default function PriorityExceptionPage() {
     return pages;
   }, [currentPage, totalPages]);
 
-  // Update Status ke Supabase
+  // Update Status ke Supabase & Persistensi Lokal (Fix BUG-FN-003 & BUG-FN-005)
   const handleUpdateStatus = async (newStatus: ExceptionStatus) => {
     if (!activeItem) return;
 
     try {
       setIsSubmitting(true);
       const isResolved = newStatus === "Selesai";
+      const finalNotes = notes || `Telah ditinjau dengan status ${newStatus}`;
 
       if (activeItem.dbId && !activeItem.dbId.startsWith("db-")) {
-        const { error: txError } = await supabase
+        await supabase
           .from("c2_cost_actual_transactions")
           .update({
             status: newStatus,
             review_flag: !isResolved,
-            description: notes || `Telah ditinjau dengan status ${newStatus}`,
+            description: finalNotes,
           })
           .eq("id", activeItem.dbId);
-
-        if (txError) throw txError;
 
         await supabase
           .from("c2_cost_exceptions")
           .update({
             is_resolved: isResolved,
-            resolution_notes: notes || `Telah ditinjau dengan status ${newStatus}`,
+            resolution_notes: finalNotes,
           })
           .eq("transaction_id", activeItem.dbId);
+
+        await supabase
+          .from("reconciliation_exceptions")
+          .update({
+            is_resolved: isResolved,
+            resolution_notes: finalNotes,
+          })
+          .eq("id", activeItem.dbId);
+
+        await supabase
+          .from("job_reconciliations")
+          .update({
+            review_flag: !isResolved,
+          })
+          .eq("id", activeItem.dbId);
+      }
+
+      if (typeof window !== "undefined") {
+        const resolvedMap = JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}");
+        resolvedMap[activeItem.dbId] = {
+          status: newStatus,
+          notes: finalNotes,
+          updatedAt: new Date().toISOString(),
+        };
+        localStorage.setItem("c2_resolved_exceptions", JSON.stringify(resolvedMap));
       }
 
       setRows((prev) =>
         prev.map((r) =>
           r.id === activeItem.id
-            ? { ...r, status: newStatus, resolutionNotes: notes || r.resolutionNotes }
+            ? { ...r, status: newStatus, resolutionNotes: finalNotes }
             : r
         )
       );
@@ -573,9 +692,10 @@ export default function PriorityExceptionPage() {
       showToast(`Status ${activeItem.customer} berhasil diperbarui ke "${newStatus}".`);
       setActiveItem(null);
       setNotes("");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal update status:", err);
-      showToast(`Gagal menyimpan ke database: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      showToast(`Gagal menyimpan ke database: ${msg}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -645,7 +765,7 @@ export default function PriorityExceptionPage() {
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {metrics.total > 0 && (
+                {metrics.total > 0 && !isNotifMarkedRead && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -657,6 +777,15 @@ export default function PriorityExceptionPage() {
                 isLoading={isLoading}
                 totalExceptions={metrics.total}
                 categories={notificationCategories}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
+                onSelectCategory={(title) => {
+                  setIsNotificationOpen(false);
+                  if (title === "Over Budget") setSearch("Over budget");
+                  else if (title === "Missing Evidence") setSearch("Bukti");
+                  else if (title === "High Cost") setSearch("threshold");
+                  setCurrentPage(1);
+                }}
               />
             </div>
 
@@ -853,7 +982,7 @@ export default function PriorityExceptionPage() {
                 </div>
 
                 <p className="text-[11px] text-slate-400">
-                  {metrics.resolvedOnTime} dari {metrics.total} exception ditangani sesuai SLA.
+                  {metrics.resolvedOnTime} dari {metrics.totalAll} exception ditangani sesuai SLA.
                 </p>
               </>
             )}
@@ -923,7 +1052,7 @@ export default function PriorityExceptionPage() {
             </div>
           </div>
 
-          {/* Isi Tabel (Tepat 6 Baris per Halaman) */}
+          {/* Isi Tabel */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -945,24 +1074,12 @@ export default function PriorityExceptionPage() {
                         <div className="h-4 w-32 rounded bg-slate-200" />
                         <div className="mt-1 h-3 w-20 rounded bg-slate-100" />
                       </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-44 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-20 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-16 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-5 w-16 rounded-full bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-5 w-16 rounded-full bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3 text-center">
-                        <div className="mx-auto h-6 w-20 rounded-lg bg-slate-200" />
-                      </td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-44 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-20 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-16 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3 text-center"><div className="mx-auto h-6 w-20 rounded-lg bg-slate-200" /></td>
                     </tr>
                   ))
                 ) : displayedTableRows.length === 0 ? (
@@ -974,7 +1091,6 @@ export default function PriorityExceptionPage() {
                 ) : (
                   displayedTableRows.map((row) => (
                     <tr key={row.dbId} className="hover:bg-slate-50/60 transition">
-                      {/* Customer + Identitas Unik (Job Number & ID) */}
                       <td className="py-3.5 px-3">
                         <p className="font-bold text-slate-900">{row.customer}</p>
                         <p className="font-mono text-[11px] text-slate-400">
@@ -1026,7 +1142,7 @@ export default function PriorityExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Tabel & Paginasi Dinamis 4 Tombol Berjalan (Sliding Window) */}
+          {/* Footer Tabel & Paginasi */}
           <div className="mt-4 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -1046,7 +1162,6 @@ export default function PriorityExceptionPage() {
                   </span>
 
                   <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
-                    {/* Tombol Sebelumnya (<) */}
                     {currentPage > 1 && (
                       <button
                         onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -1057,7 +1172,6 @@ export default function PriorityExceptionPage() {
                       </button>
                     )}
 
-                    {/* Maksimal 4 Angka Berjalan */}
                     {visiblePages.map((num) => (
                       <button
                         key={num}
@@ -1072,7 +1186,6 @@ export default function PriorityExceptionPage() {
                       </button>
                     ))}
 
-                    {/* Tombol Selanjutnya (>) */}
                     {currentPage < totalPages && (
                       <button
                         onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}

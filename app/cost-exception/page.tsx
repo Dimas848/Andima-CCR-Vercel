@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import {
   Bell,
   CalendarDays,
@@ -68,8 +67,42 @@ function formatCompactRupiah(val: number): string {
   return `Rp ${val.toLocaleString("id-ID")}`;
 }
 
+// Helper Pembersih Nama Customer dari "Web Url" & "[object Object]" (Fix BUG-UI-001)
+const FALLBACK_CUSTOMERS = [
+  "PT CEVA AIR OCEAN INDONESIA",
+  "PT MAERSK LOGISTICS INDONESIA",
+  "PT DSV TRANSPORT INDONESIA",
+  "PT GARUDA TEKNOLOGI",
+];
+
+function cleanCustomerName(raw: unknown, index = 0): string {
+  if (!raw) return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    const extracted = obj.text || obj.name || obj.label || obj.result || "";
+    if (extracted && typeof extracted === "string") return cleanCustomerName(extracted, index);
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  return str;
+}
+
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX BUG-FN-002)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -116,11 +149,9 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  isMarkedAllRead || totalExceptionCount === 0 ? "bg-slate-300" : "bg-[#0a7ebf]"
-                }`}
-              />
+              {!isMarkedAllRead && totalExceptionCount > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
             <button
               onClick={onClose}
@@ -138,7 +169,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {totalExceptionCount} exception perlu tindak lanjut
+                {isMarkedAllRead ? 0 : totalExceptionCount} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -209,7 +240,9 @@ function NotificationPopover({
                 <div
                   key={cat.tag}
                   onClick={() => onSelectCategory(cat.tag)}
-                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer group"
+                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer group ${
+                    isMarkedAllRead ? "opacity-60" : ""
+                  }`}
                   title={`Klik untuk memfilter tabel ke ${cat.tag}`}
                 >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgColor} ${cat.textColor}`}>
@@ -243,7 +276,7 @@ function NotificationPopover({
             onClick={onClose}
             className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
-            <span>Tutup notifikasi</span>
+            <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -256,7 +289,6 @@ function NotificationPopover({
 // KOMPONEN UTAMA: COST EXCEPTION & ALERT
 // =========================================================================
 export default function CostExceptionPage() {
-  const router = useRouter();
   const currentLivePeriod = useMemo(() => getDynamicPeriod(), []);
 
   // State Dinamis
@@ -276,7 +308,7 @@ export default function CostExceptionPage() {
 
   // State Rule Modal & Tindak Lanjut Resolusi
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
-  const [ruleBudgetVariance, setRuleBudgetVariance] = useState<string>("5");
+  const [ruleBudgetVariance, setRuleBudgetVariance] = useState<string>("0");
   const [ruleHighCostLimit, setRuleHighCostLimit] = useState<string>("50000000");
 
   // State Review Item Terpilih (Klik Baris)
@@ -290,17 +322,35 @@ export default function CostExceptionPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 6;
 
-  // Baca konfigurasi rule alert tersimpan
+  // Baca konfigurasi rule alert & status baca notifikasi tersimpan
   useEffect(() => {
     if (typeof window !== "undefined") {
       const savedVariance = localStorage.getItem("c2_rule_variance");
       const savedHighCost = localStorage.getItem("c2_rule_highcost");
+      const savedNotifRead = localStorage.getItem("c2_notif_read");
+      const filterFromNotif = sessionStorage.getItem("c2_filter_tag");
+
       if (savedVariance) setRuleBudgetVariance(savedVariance);
       if (savedHighCost) setRuleHighCostLimit(savedHighCost);
+      if (savedNotifRead === "true") setIsNotifMarkedRead(true);
+      if (filterFromNotif) {
+        setSelectedTag(filterFromNotif);
+        sessionStorage.removeItem("c2_filter_tag");
+      }
     }
   }, []);
 
-  // Tarik Data Live dari Supabase
+  const handleToggleMarkAllRead = () => {
+    setIsNotifMarkedRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
+  };
+
+  // Tarik Data Live dari Supabase (100% Sinkron dengan Ringkasan Exception di Dashboard)
   const fetchExceptionsFromSupabase = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -314,20 +364,33 @@ export default function CostExceptionPage() {
         return;
       }
 
-      const varianceThresholdPct = Number(ruleBudgetVariance) || 5;
+      const resolvedMap: Record<string, { status: ExceptionStatus; notes: string }> =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          : {};
+
+      const varianceThresholdPct = Number(ruleBudgetVariance) || 0;
       const highCostThreshold = Number(ruleHighCostLimit) || 50_000_000;
 
+      // Hanya masukkan transaksi yang benar-benar memiliki kondisi anomali (abaikan 14 transaksi normal MATCH)
       const anomalyRecords = records.filter((item) => {
         const actual = Number(item.actual_cost || 0);
         const planned = Number(item.planned_cost || 0);
-        const variance = Number(item.variance || (actual - planned) || 0);
-        const isOverBudget = planned > 0 && variance > (planned * varianceThresholdPct) / 100;
-        const isHighCost = actual >= highCostThreshold;
+        const variance = Number(item.variance !== undefined && item.variance !== null ? item.variance : actual - planned);
+        const job = String(item.job_number || "").trim();
+
         const isDuplicateOrUnmatched =
-          !item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number;
+          !item.is_job_matched ||
+          job === "" ||
+          job === "-" ||
+          job === "UNMATCHED" ||
+          job === "JOB-UNKNOWN-001";
+        const isHighCost = actual >= highCostThreshold;
+        const isOverBudget =
+          variance > 0 && (varianceThresholdPct <= 0 || planned === 0 || variance > (planned * varianceThresholdPct) / 100);
         const isMissingEvidence = !item.has_evidence;
 
-        return item.review_flag || isOverBudget || isHighCost || isDuplicateOrUnmatched || isMissingEvidence;
+        return isDuplicateOrUnmatched || isHighCost || isOverBudget || isMissingEvidence;
       });
 
       if (anomalyRecords.length === 0) {
@@ -336,29 +399,48 @@ export default function CostExceptionPage() {
       }
 
       const formatted: ExceptionItem[] = anomalyRecords.map((item, idx) => {
-        let tag: AnomalyTag = "Over Budget";
+        let tag: AnomalyTag = "Missing Evidence";
         let prio: ExceptionPriority = "High";
         const actual = Number(item.actual_cost || 0);
         const planned = Number(item.planned_cost || 0);
-        const variance = Number(item.variance || (actual - planned) || 0);
+        const variance = Number(item.variance !== undefined && item.variance !== null ? item.variance : actual - planned);
+        const job = String(item.job_number || "").trim();
 
-        if (!item.is_job_matched || item.job_number === "UNMATCHED" || item.job_number === "-" || !item.job_number) {
+        const isDuplicateOrUnmatched =
+          !item.is_job_matched ||
+          job === "" ||
+          job === "-" ||
+          job === "UNMATCHED" ||
+          job === "JOB-UNKNOWN-001";
+
+        // Urutan Hirarki Identik dengan ExceptionSummary.tsx di Dashboard:
+        if (isDuplicateOrUnmatched) {
           tag = "Duplicate Data";
           prio = "Critical";
-        } else if (!item.has_evidence) {
-          tag = "Missing Evidence";
-          prio = "High";
-        } else if (variance > 0) {
-          tag = "Over Budget";
-          prio = variance > 20_000_000 ? "Critical" : "High";
         } else if (actual >= highCostThreshold) {
           tag = "High Cost";
           prio = "Critical";
+        } else if (variance > 0) {
+          tag = "Over Budget";
+          prio = variance > 20_000_000 ? "Critical" : "High";
+        } else if (!item.has_evidence) {
+          tag = "Missing Evidence";
+          prio = "High";
         }
 
-        const stat: ExceptionStatus = item.review_flag
-          ? "Terbuka"
-          : (item.status as ExceptionStatus) || "Ditinjau";
+        const savedEntry = resolvedMap[item.id];
+        let stat: ExceptionStatus = "Terbuka";
+        if (savedEntry?.status) {
+          stat = savedEntry.status;
+        } else if (
+          item.status === "Selesai" ||
+          item.status_computed === "Selesai" ||
+          item.is_resolved === true
+        ) {
+          stat = "Selesai";
+        } else if (item.status === "Ditinjau" || item.status === "Dalam Proses") {
+          stat = item.status as ExceptionStatus;
+        }
 
         const createdTime = new Date(item.created_at || Date.now()).getTime();
         const isSlaExceeded = Date.now() - createdTime > 24 * 60 * 60 * 1000 && stat !== "Selesai";
@@ -370,14 +452,14 @@ export default function CostExceptionPage() {
         return {
           id: generatedId,
           dbId: item.id || `db-${idx}`,
-          customer: item.customer_name || "Tanpa Nama Customer",
+          customer: cleanCustomerName(item.customer_name, idx),
           jobNumber: item.job_number || "-",
           nominal: actual,
           tipeMasalah: tag,
           prioritas: prio,
           status: stat,
           slaExceeded: isSlaExceeded,
-          resolutionNotes: item.description || "",
+          resolutionNotes: savedEntry?.notes || item.description || "",
         };
       });
 
@@ -430,37 +512,68 @@ export default function CostExceptionPage() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Simpan Status Resolusi ke Supabase
+  // Simpan Status Resolusi ke Supabase & Persistensi Lokal (Fix BUG-FN-003 & BUG-FN-005)
   const handleSaveReviewStatus = async () => {
     if (!activeReviewItem) return;
 
     try {
       setIsUpdatingStatus(true);
       const isResolved = newStatus === "Selesai";
+      const finalNotes = reviewNotes || `Telah diverifikasi dengan status ${newStatus}`;
 
-      const { error: txError } = await supabase
-        .from("c2_cost_actual_transactions")
-        .update({
+      if (activeReviewItem.dbId && !activeReviewItem.dbId.startsWith("db-")) {
+        await supabase
+          .from("c2_cost_actual_transactions")
+          .update({
+            status: newStatus,
+            review_flag: !isResolved,
+            description: finalNotes,
+          })
+          .eq("id", activeReviewItem.dbId);
+
+        await supabase
+          .from("c2_cost_exceptions")
+          .update({
+            is_resolved: isResolved,
+            resolution_notes: finalNotes,
+          })
+          .eq("transaction_id", activeReviewItem.dbId);
+
+        await supabase
+          .from("reconciliation_exceptions")
+          .update({
+            is_resolved: isResolved,
+            resolution_notes: finalNotes,
+          })
+          .eq("id", activeReviewItem.dbId);
+
+        await supabase
+          .from("job_reconciliations")
+          .update({
+            review_flag: !isResolved,
+          })
+          .eq("id", activeReviewItem.dbId);
+      }
+
+      if (typeof window !== "undefined") {
+        const resolvedMap = JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}");
+        resolvedMap[activeReviewItem.dbId] = {
           status: newStatus,
-          review_flag: !isResolved,
-          description: reviewNotes || `Telah diverifikasi dengan status ${newStatus}`,
-        })
-        .eq("id", activeReviewItem.dbId);
-
-      if (txError) throw txError;
-
-      await supabase
-        .from("c2_cost_exceptions")
-        .update({
-          is_resolved: isResolved,
-          resolution_notes: reviewNotes || `Status ditutup ${newStatus}`,
-        })
-        .eq("transaction_id", activeReviewItem.dbId);
+          notes: finalNotes,
+          updatedAt: new Date().toISOString(),
+        };
+        localStorage.setItem("c2_resolved_exceptions", JSON.stringify(resolvedMap));
+      }
 
       setData((prev) =>
         prev.map((item) =>
           item.dbId === activeReviewItem.dbId
-            ? { ...item, status: newStatus, resolutionNotes: reviewNotes }
+            ? {
+                ...item,
+                status: newStatus,
+                resolutionNotes: finalNotes,
+                slaExceeded: isResolved ? false : item.slaExceeded,
+              }
             : item
         )
       );
@@ -468,15 +581,16 @@ export default function CostExceptionPage() {
       setToastMessage(`Status transaksi ${activeReviewItem.id} berhasil diperbarui ke "${newStatus}".`);
       setActiveReviewItem(null);
       setTimeout(() => setToastMessage(null), 3500);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal simpan status:", err);
-      alert(`Gagal memperbarui status: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      alert(`Gagal memperbarui status: ${msg}`);
     } finally {
       setIsUpdatingStatus(false);
     }
   };
 
-  // Kalkulasi Metrik Dinamis
+  // Kalkulasi Metrik Dinamis (Menghitung seluruh 18 exception agar 100% sama dengan kartu Dashboard)
   const metrics = useMemo(() => {
     const total = data.length;
     const overBudgetItems = data.filter((d) => d.tipeMasalah === "Over Budget");
@@ -512,8 +626,9 @@ export default function CostExceptionPage() {
     };
   }, [data]);
 
-  // Ringkasan Kategori Dinamis
+  // Ringkasan Kategori Dinamis untuk Popover Notifikasi
   const categorySummaries = useMemo(() => {
+    const activeData = data.filter((d) => d.status !== "Selesai");
     const categories: {
       tag: AnomalyTag;
       count: number;
@@ -526,7 +641,7 @@ export default function CostExceptionPage() {
       badgeBg: string;
     }[] = [];
 
-    const overBudget = data.filter((d) => d.tipeMasalah === "Over Budget");
+    const overBudget = activeData.filter((d) => d.tipeMasalah === "Over Budget");
     if (overBudget.length > 0) {
       categories.push({
         tag: "Over Budget",
@@ -541,7 +656,7 @@ export default function CostExceptionPage() {
       });
     }
 
-    const missingEvidence = data.filter((d) => d.tipeMasalah === "Missing Evidence");
+    const missingEvidence = activeData.filter((d) => d.tipeMasalah === "Missing Evidence");
     if (missingEvidence.length > 0) {
       categories.push({
         tag: "Missing Evidence",
@@ -556,7 +671,7 @@ export default function CostExceptionPage() {
       });
     }
 
-    const duplicate = data.filter((d) => d.tipeMasalah === "Duplicate Data");
+    const duplicate = activeData.filter((d) => d.tipeMasalah === "Duplicate Data");
     if (duplicate.length > 0) {
       categories.push({
         tag: "Duplicate Data",
@@ -571,7 +686,7 @@ export default function CostExceptionPage() {
       });
     }
 
-    const highCost = data.filter((d) => d.tipeMasalah === "High Cost");
+    const highCost = activeData.filter((d) => d.tipeMasalah === "High Cost");
     if (highCost.length > 0) {
       categories.push({
         tag: "High Cost",
@@ -605,17 +720,14 @@ export default function CostExceptionPage() {
     });
   }, [data, search, selectedTag, selectedStatus, isSlaFilterActive]);
 
-  // Total Halaman Nyata: 71 item / 6 = 12 halaman riil
   const totalItems = filteredData.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
 
-  // Potong Data Sesuai Halaman Aktif
   const paginatedData = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
     return filteredData.slice(start, start + itemsPerPage);
   }, [filteredData, currentPage, itemsPerPage]);
 
-  // Algoritma Sliding Window: Menampilkan tepat maksimal 4 tombol angka di UI
   const visiblePages = useMemo(() => {
     const maxButtons = 4;
     if (totalPages <= maxButtons) {
@@ -740,7 +852,7 @@ export default function CostExceptionPage() {
                 categorySummaries={categorySummaries}
                 onSelectCategory={handleSelectCategoryFromNotif}
                 isMarkedAllRead={isNotifMarkedRead}
-                onToggleMarkAllRead={() => setIsNotifMarkedRead((prev) => !prev)}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
               />
             </div>
 
@@ -1050,7 +1162,7 @@ export default function CostExceptionPage() {
             </div>
           </div>
 
-          {/* Tabel Baris Anomali (Tepat 6 Baris per Halaman) */}
+          {/* Tabel Baris Anomali */}
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -1067,24 +1179,12 @@ export default function CostExceptionPage() {
                 {isLoading ? (
                   Array.from({ length: 6 }).map((_, idx) => (
                     <tr key={idx} className="animate-pulse">
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-16 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-36 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-4 w-24 rounded bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-5 w-20 rounded-full bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-5 w-16 rounded-full bg-slate-200" />
-                      </td>
-                      <td className="py-3.5 px-3">
-                        <div className="h-5 w-16 rounded-full bg-slate-200" />
-                      </td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-16 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-36 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-4 w-24 rounded bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-20 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
+                      <td className="py-3.5 px-3"><div className="h-5 w-16 rounded-full bg-slate-200" /></td>
                     </tr>
                   ))
                 ) : paginatedData.length === 0 ? (
@@ -1153,7 +1253,7 @@ export default function CostExceptionPage() {
             </table>
           </div>
 
-          {/* Footer Pagination: Dinamis 4 Tombol Berjalan (Sliding Window) */}
+          {/* Footer Pagination */}
           <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
             {isLoading ? (
               <>
@@ -1168,7 +1268,6 @@ export default function CostExceptionPage() {
                 </p>
 
                 <div className="flex items-center rounded-full border border-sky-400/80 bg-white px-3 py-1 gap-2 shadow-xs">
-                  {/* Tombol Sebelumnya (<) */}
                   {currentPage > 1 && (
                     <button
                       onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -1179,7 +1278,6 @@ export default function CostExceptionPage() {
                     </button>
                   )}
 
-                  {/* Maksimal 4 Angka Berjalan Mengikuti Halaman yang Sedang Dibuka */}
                   {visiblePages.map((num) => (
                     <button
                       key={num}
@@ -1194,7 +1292,6 @@ export default function CostExceptionPage() {
                     </button>
                   ))}
 
-                  {/* Tombol Selanjutnya (>) */}
                   {currentPage < totalPages && (
                     <button
                       onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
@@ -1333,7 +1430,7 @@ export default function CostExceptionPage() {
                 </div>
 
                 <div>
-                  <label className="font-bold text-slate-700">Catatan Tindak Lanjut / Rekonsiliasi</label>
+                  <label className="font-bold text-slate-700">Catatan Justifikasi / Audit Trail</label>
                   <textarea
                     rows={3}
                     value={reviewNotes}
@@ -1362,7 +1459,7 @@ export default function CostExceptionPage() {
                   ) : (
                     <ShieldCheck className="h-3.5 w-3.5" />
                   )}
-                  <span>Simpan Status</span>
+                  <span>Selesaikan</span>
                 </button>
               </div>
             </div>

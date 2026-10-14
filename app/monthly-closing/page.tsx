@@ -74,7 +74,7 @@ function formatCompactRupiah(val: number): string {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX BUG-FN-002)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -93,6 +93,9 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
+  onSelectCategory: (title: string) => void;
 }
 
 function NotificationPopover({
@@ -102,9 +105,11 @@ function NotificationPopover({
   isLoading,
   totalExceptions,
   categories,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
+  onSelectCategory,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
 
@@ -116,11 +121,13 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {!isMarkedAllRead && totalExceptions > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -134,7 +141,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {totalExceptions} exception perlu tindak lanjut
+                {isMarkedAllRead ? 0 : totalExceptions} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -143,16 +150,16 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -162,7 +169,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -202,7 +209,13 @@ function NotificationPopover({
             categories.map((cat, i) => {
               const IconComp = cat.icon;
               return (
-                <div key={`notif-closing-${cat.title}-${i}`} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  key={`notif-closing-${cat.title}-${i}`}
+                  onClick={() => onSelectCategory(cat.title)}
+                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                    isMarkedAllRead ? "opacity-60" : ""
+                  }`}
+                >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
                     <IconComp className="h-4 w-4" />
                   </div>
@@ -218,7 +231,7 @@ function NotificationPopover({
                       {cat.description}
                     </p>
                     <span className={`mt-2 block text-[11px] font-bold ${cat.colorClass}`}>
-                      {cat.actionNote}
+                      {cat.actionNote} →
                     </span>
                   </div>
                 </div>
@@ -229,10 +242,10 @@ function NotificationPopover({
 
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            onClick={() => onSelectCategory("")}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
-            <span>Tutup notifikasi</span>
+            <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -255,11 +268,12 @@ export default function MonthlyClosingPage() {
 
   // State Transaksi & Status
   const [transactions, setTransactions] = useState<any[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState<string>("September 2026");
+  const [selectedPeriod, setSelectedPeriod] = useState<string>("ALL");
   const [dynamicPeriodOptions, setDynamicPeriodOptions] = useState<DropdownOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
   const [filterKategori, setFilterKategori] = useState("Semua Aktivitas");
 
   // State Penguncian Periode Manual & Konfirmasi Modal
@@ -269,7 +283,23 @@ export default function MonthlyClosingPage() {
   const [isActionLoading, setIsActionLoading] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Tarik Data Nyata dari Supabase View c2_cost_transactions & Status Penguncian
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+    }
+  }, []);
+
+  const handleToggleMarkAllRead = () => {
+    setIsNotifMarkedRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
+  };
+
+  // Tarik Data Nyata dari Supabase View c2_cost_transactions & Sinkronisasi Status Exception (Fix BUG-FN-005)
   const fetchClosingData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -283,29 +313,54 @@ export default function MonthlyClosingPage() {
         return;
       }
 
-      setTransactions(txRes.data);
+      // Ambil status exception yang telah diselesaikan dari localStorage maupun DB
+      const resolvedMap: Record<string, { status: string; notes: string }> =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          : {};
 
-      // Ekstrak Pilihan Periode dari Database
-      const uniquePeriods = Array.from(new Set(txRes.data.map((t) => t.period_month).filter(Boolean)));
+      const enrichedTransactions = txRes.data.map((t) => {
+        const localSaved = resolvedMap[t.id];
+        const isResolved =
+          localSaved?.status === "Selesai" ||
+          t.status === "Selesai" ||
+          t.status_computed === "Selesai" ||
+          t.is_resolved === true;
+
+        return {
+          ...t,
+          status: isResolved ? "Selesai" : localSaved?.status || t.status || "Terbuka",
+          review_flag: isResolved ? false : Boolean(t.review_flag),
+          has_evidence: isResolved ? true : Boolean(t.has_evidence),
+        };
+      });
+
+      setTransactions(enrichedTransactions);
+
+      // Ekstrak Pilihan Periode dari Database (Sertakan Semua Periode agar selaras dengan Priority Exception)
+      const uniquePeriods = Array.from(new Set(enrichedTransactions.map((t) => t.period_month).filter(Boolean)));
+      const opts: DropdownOption[] = [{ value: "ALL", label: `Semua Periode (${getDynamicPeriod(0)})` }];
       if (uniquePeriods.length > 0) {
-        setDynamicPeriodOptions(uniquePeriods.map((p) => ({ value: p, label: p })));
-        if (!selectedPeriod || !uniquePeriods.includes(selectedPeriod)) {
-          setSelectedPeriod(uniquePeriods[0]);
-        }
+        uniquePeriods.forEach((p) => opts.push({ value: p, label: p }));
       } else {
-        setDynamicPeriodOptions([
+        opts.push(
           { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
-          { value: getDynamicPeriod(1), label: getDynamicPeriod(1) },
-        ]);
+          { value: getDynamicPeriod(1), label: getDynamicPeriod(1) }
+        );
       }
+      setDynamicPeriodOptions(opts);
 
       // Periksa Apakah Periode Sudah Terkunci di Database atau LocalStorage
+      const activePeriodKey = selectedPeriod === "ALL" ? (uniquePeriods[0] || getDynamicPeriod(0)) : selectedPeriod;
       const isLockedInDb = batchRes.data?.some(
-        (b) => b.period_month === selectedPeriod && (b.status === "LOCKED" || b.status === "CLOSED")
+        (b) => b.period_month === activePeriodKey && (b.status === "LOCKED" || b.status === "CLOSED")
       );
-      const isLockedLocal = typeof window !== "undefined" && localStorage.getItem(`c2_locked_${selectedPeriod}`) === "true";
-      setIsPeriodLockedManual(Boolean(isLockedInDb || isLockedLocal));
+      const isLockedLocal =
+        typeof window !== "undefined" &&
+        (localStorage.getItem(`c2_locked_${selectedPeriod}`) === "true" ||
+          localStorage.getItem(`c2_locked_${activePeriodKey}`) === "true");
 
+      setIsPeriodLockedManual(Boolean(isLockedInDb || isLockedLocal));
     } catch (err) {
       console.error("Gagal menarik data transaksi closing:", err);
       setTransactions([]);
@@ -319,21 +374,56 @@ export default function MonthlyClosingPage() {
     fetchClosingData();
   }, [fetchClosingData]);
 
+  // Dengarkan event fokus/storage agar saat user berpindah tab atau kembali dari Priority Exception langsung real-time ter-update
+  useEffect(() => {
+    const handleFocusOrStorage = () => {
+      fetchClosingData();
+    };
+    window.addEventListener("focus", handleFocusOrStorage);
+    window.addEventListener("storage", handleFocusOrStorage);
+    return () => {
+      window.removeEventListener("focus", handleFocusOrStorage);
+      window.removeEventListener("storage", handleFocusOrStorage);
+    };
+  }, [fetchClosingData]);
+
   // Transaksi Terfilter Sesuai Periode Terpilih
   const filteredPeriodTransactions = useMemo(() => {
-    if (!selectedPeriod) return transactions;
+    if (!selectedPeriod || selectedPeriod === "ALL") return transactions;
     return transactions.filter((t) => t.period_month === selectedPeriod);
   }, [transactions, selectedPeriod]);
 
-  // Kalkulasi Metrik Dinamis Berdasarkan Data Database
+  const displayPeriodLabel = useMemo(() => {
+    if (selectedPeriod === "ALL") return getDynamicPeriod(0);
+    return selectedPeriod;
+  }, [selectedPeriod]);
+
+  // Kalkulasi Metrik Dinamis Berdasarkan Data Database (Fix BUG-FN-005: Jumlah Exception Aktif berkurang real-time)
   const metrics = useMemo(() => {
+    const resolvedMap: Record<string, { status: string }> =
+      typeof window !== "undefined"
+        ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+        : {};
+
     const totalCount = filteredPeriodTransactions.length;
     const sumActual = filteredPeriodTransactions.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
-    const anomalies = filteredPeriodTransactions.filter(
-      (t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence || !t.is_job_matched
+
+    // Seluruh transaksi yang memiliki riwayat anomali
+    const allAnomalies = filteredPeriodTransactions.filter(
+      (t) =>
+        t.review_flag ||
+        Number(t.variance || 0) > 0 ||
+        !t.has_evidence ||
+        !t.is_job_matched ||
+        t.status === "Selesai" ||
+        Boolean(resolvedMap[t.id])
     );
-    const resolvedCount = anomalies.filter((t) => t.status === "Selesai").length;
-    const pendingCount = anomalies.length - resolvedCount;
+
+    const resolvedCount = allAnomalies.filter(
+      (t) => t.status === "Selesai" || resolvedMap[t.id]?.status === "Selesai"
+    ).length;
+
+    const pendingCount = Math.max(0, allAnomalies.length - resolvedCount);
     const isFullyResolved = totalCount > 0 && pendingCount === 0;
 
     const isLocked = isPeriodLockedManual || (totalCount > 0 && isFullyResolved);
@@ -341,7 +431,9 @@ export default function MonthlyClosingPage() {
     return {
       totalRecords: totalCount,
       totalCost: sumActual,
-      exceptionsCount: anomalies.length,
+      totalAnomaliesCount: allAnomalies.length,
+      // Nilai utama kartu EXCEPTION menampilkan jumlah exception aktif yang masih terbuka (berkurang dari 18 -> 17 saat diselesaikan)
+      exceptionsCount: pendingCount,
       resolvedCount,
       pendingCount,
       isFullyResolved,
@@ -354,14 +446,22 @@ export default function MonthlyClosingPage() {
   const checklistEvaluated = useMemo(() => {
     const hasData = filteredPeriodTransactions.length > 0;
     const noPendingExceptions = hasData && metrics.pendingCount === 0;
-    const allEvidencePresent = hasData && !filteredPeriodTransactions.some((t) => !t.has_evidence);
+    const allEvidencePresent =
+      hasData &&
+      !filteredPeriodTransactions.some((t) => !t.has_evidence && t.status !== "Selesai");
     const budgetReconciled = hasData;
     const approved = metrics.isLocked;
     const locked = metrics.isLocked;
 
     const items = [
-      { label: "Data upload tervalidasi", done: hasData },
-      { label: "Exception telah ditangani", done: noPendingExceptions },
+      { label: `Data upload tervalidasi (${metrics.totalRecords} baris)`, done: hasData },
+      {
+        label:
+          metrics.pendingCount === 0
+            ? `Seluruh exception telah ditangani (${metrics.resolvedCount} selesai)`
+            : `Exception telah ditangani (${metrics.resolvedCount} selesai · ${metrics.pendingCount} aktif)`,
+        done: noPendingExceptions,
+      },
       { label: "Bukti transaksi lengkap", done: allEvidencePresent },
       { label: "Rekonsiliasi budget selesai", done: budgetReconciled },
       { label: "Approval Head of Finance", done: approved },
@@ -375,28 +475,48 @@ export default function MonthlyClosingPage() {
   }, [filteredPeriodTransactions, metrics]);
 
   // Eksekusi Kunci / Pengesahan Periode ke Supabase
+// Eksekusi Kunci / Pengesahan Periode ke Supabase & Audit Trail (FR-004 & TR-004)
   const handleLockPeriod = async () => {
+    // Validasi FR-CCR2-004-02: Wajib isi Managerial Override Notes jika masih ada exception aktif
+    if (metrics.pendingCount > 0 && !approvalNotes.trim()) {
+      alert("Masih terdapat exception aktif. Mohon isi Catatan Justifikasi (Managerial Override Notes) terlebih dahulu!");
+      return;
+    }
+
     try {
       setIsActionLoading(true);
 
-      // 1. Perbarui status batch di c2_cost_ingestion_batches
+      // 1. Panggil API resmi sesuai TR-2909-004 (menyimpan ke c2_cost_period_locks & c2_cost_closing_audit_logs)
+      await fetch("/api/v1/cost-closing/approve-lock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          periodMonth: displayPeriodLabel,
+          managerNotes: approvalNotes || "Persetujuan penutupan buku reguler oleh Manager of Accounting",
+          totalAmount: metrics.totalCost,
+        }),
+      });
+
+      // 2. Perbarui status batch di c2_cost_ingestion_batches
       await supabase
         .from("c2_cost_ingestion_batches")
-        .update({ status: "LOCKED" })
-        .eq("period_month", selectedPeriod);
+        .update({ status: "CLOSED" })
+        .eq("period_month", displayPeriodLabel);
 
-      // 2. Simpan status di localStorage sebagai persistensi instan
+      // 3. Simpan status di localStorage sebagai persistensi instan
       if (typeof window !== "undefined") {
         localStorage.setItem(`c2_locked_${selectedPeriod}`, "true");
+        localStorage.setItem(`c2_locked_${displayPeriodLabel}`, "true");
       }
 
       setIsPeriodLockedManual(true);
       setIsLockModalOpen(false);
-      setToastMessage(`Periode ${selectedPeriod} berhasil disetujui dan dikunci secara permanen!`);
+      setToastMessage(`Periode ${displayPeriodLabel} berhasil disetujui dan dikunci (CLOSED)!`);
       setTimeout(() => setToastMessage(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal mengunci periode:", err);
-      alert(`Gagal menyimpan penguncian: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      alert(`Gagal menyimpan penguncian: ${msg}`);
     } finally {
       setIsActionLoading(false);
     }
@@ -410,18 +530,20 @@ export default function MonthlyClosingPage() {
       await supabase
         .from("c2_cost_ingestion_batches")
         .update({ status: "COMMITTED" })
-        .eq("period_month", selectedPeriod);
+        .eq("period_month", displayPeriodLabel);
 
       if (typeof window !== "undefined") {
         localStorage.removeItem(`c2_locked_${selectedPeriod}`);
+        localStorage.removeItem(`c2_locked_${displayPeriodLabel}`);
       }
 
       setIsPeriodLockedManual(false);
-      setToastMessage(`Penguncian periode ${selectedPeriod} telah dibuka kembali.`);
+      setToastMessage(`Penguncian periode ${displayPeriodLabel} telah dibuka kembali.`);
       setTimeout(() => setToastMessage(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal membuka kunci periode:", err);
-      alert(`Gagal memperbarui: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      alert(`Gagal memperbarui: ${msg}`);
     } finally {
       setIsActionLoading(false);
     }
@@ -440,10 +562,10 @@ export default function MonthlyClosingPage() {
     },
     {
       tahap: 2,
-      aktivitas: "Review exception prioritas",
+      aktivitas: `Review exception prioritas (${metrics.resolvedCount} selesai · ${metrics.pendingCount} aktif)`,
       pelaksana: "Finance Controller",
       kategori: "Review",
-      status: metrics.isFullyResolved ? "Selesai" : metrics.exceptionsCount > 0 ? "Dalam Proses" : "Belum Ada",
+      status: metrics.isFullyResolved ? "Selesai" : metrics.pendingCount > 0 ? "Dalam Proses" : "Belum Ada",
       statusBadgeClass: metrics.isFullyResolved ? "bg-[#ecfdf5] text-[#059669]" : "bg-[#fef3c7] text-[#d97706]",
       waktu: liveTime2,
     },
@@ -473,10 +595,11 @@ export default function MonthlyClosingPage() {
     return dynamicActivities.filter((a) => a.kategori === filterKategori);
   }, [filterKategori, dynamicActivities]);
 
-  // Ringkasan Notifikasi Dinamis
+  // Ringkasan Notifikasi Dinamis (hanya transaksi yang belum Selesai)
   const notificationCategories = useMemo(() => {
+    const activeTx = filteredPeriodTransactions.filter((t) => t.status !== "Selesai");
     const list = [];
-    const overBudget = filteredPeriodTransactions.filter((r) => Number(r.variance || 0) > 0);
+    const overBudget = activeTx.filter((r) => Number(r.variance || 0) > 0);
     if (overBudget.length > 0) {
       list.push({
         title: "Over Budget",
@@ -491,7 +614,7 @@ export default function MonthlyClosingPage() {
       });
     }
 
-    const highCost = filteredPeriodTransactions.filter((r) => Number(r.actual_cost || 0) >= 50_000_000);
+    const highCost = activeTx.filter((r) => Number(r.actual_cost || 0) >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -506,7 +629,7 @@ export default function MonthlyClosingPage() {
       });
     }
 
-    const missingEvidence = filteredPeriodTransactions.filter((r) => !r.has_evidence);
+    const missingEvidence = activeTx.filter((r) => !r.has_evidence);
     if (missingEvidence.length > 0) {
       list.push({
         title: "Missing Evidence",
@@ -530,8 +653,8 @@ export default function MonthlyClosingPage() {
 BERITA ACARA PENUTUPAN BUKU BIAYA OPERASIONAL (MONTHLY COST CLOSING)
 PT ANDIMA TRANSPORTINDO - TAHUN BUKU 2026
 ================================================================================
-Nomor Dokumen  : BA-CCR2/2026/${selectedPeriod.replace(/\s+/g, "/")}/001
-Periode Buku   : ${selectedPeriod}
+Nomor Dokumen  : BA-CCR2/2026/${displayPeriodLabel.replace(/\s+/g, "/")}/001
+Periode Buku   : ${displayPeriodLabel}
 Status Periode : ${metrics.isLocked ? "TERKUNCI (CLOSED / READ-ONLY)" : "TERBUKA (IN PROGRESS)"}
 Otorisator     : Budi Santoso, Head of Finance
 Waktu Eksekusi : ${liveTime3} WIB
@@ -539,7 +662,7 @@ Waktu Eksekusi : ${liveTime3} WIB
 1. RINGKASAN REKONSILIASI KEUANGAN:
 - Total Baris Transaksi  : ${metrics.totalRecords.toLocaleString("id-ID")} Transaksi Tervalidasi
 - Total Realisasi Biaya  : ${formatCompactRupiah(metrics.totalCost)}
-- Transaksi Exception    : ${metrics.exceptionsCount} Item (${metrics.resolvedCount} Selesai · ${metrics.pendingCount} Menunggu)
+- Transaksi Exception    : ${metrics.pendingCount} Aktif (${metrics.resolvedCount} Selesai dari ${metrics.totalAnomaliesCount} Total)
 - Status Pengesahan      : ${metrics.approvalStatus}
 
 2. LEMBAR KONTROL AUDIT (CHECKLIST CLOSING):
@@ -553,7 +676,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.setAttribute("download", `Berita_Acara_Closing_PT_Andima_${selectedPeriod.replace(/\s+/g, "_")}.txt`);
+    link.setAttribute("download", `Berita_Acara_Closing_PT_Andima_${displayPeriodLabel.replace(/\s+/g, "_")}.txt`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -573,7 +696,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
               Monthly Closing & Approval
             </h1>
             <p className="mt-0.5 text-xs text-slate-400">
-              Penutupan dan persetujuan cost periode {selectedPeriod}
+              Penutupan dan persetujuan cost periode {displayPeriodLabel}
             </p>
           </div>
 
@@ -582,7 +705,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
             <button
               onClick={fetchClosingData}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
@@ -604,12 +727,12 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {metrics.exceptionsCount > 0 && (
+                {metrics.pendingCount > 0 && !isNotifMarkedRead && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -617,17 +740,30 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
               <NotificationPopover
                 isOpen={isNotificationOpen}
                 onClose={() => setIsNotificationOpen(false)}
-                periode={selectedPeriod}
+                periode={displayPeriodLabel}
                 isLoading={isLoading}
-                totalExceptions={metrics.exceptionsCount}
+                totalExceptions={metrics.pendingCount}
                 categories={notificationCategories}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
+                onSelectCategory={(title) => {
+                  setIsNotificationOpen(false);
+                  if (title) {
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("c2_filter_tag", title);
+                    }
+                    router.push(`/cost-exception?tag=${encodeURIComponent(title)}`);
+                  } else {
+                    router.push("/priority-exception");
+                  }
+                }}
               />
             </div>
 
             {/* Badge Periode Aktif */}
             <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
               <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
-              {selectedPeriod}
+              {displayPeriodLabel}
             </span>
           </div>
         </div>
@@ -647,7 +783,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
 
         {/* Pilihan Periode Closing */}
         <div className="mt-4 flex items-center gap-3">
-          <div className="w-56">
+          <div className="w-64">
             <CustomDropdown
               label="Pilih Periode Closing"
               value={selectedPeriod}
@@ -668,7 +804,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
               </div>
               <div>
                 <h2 className="text-sm font-bold text-[#065f46]">
-                  Periode {selectedPeriod} telah disetujui dan Terkunci
+                  Periode {displayPeriodLabel} telah disetujui dan Terkunci
                 </h2>
                 <p className="mt-0.5 text-xs text-[#047857]">
                   Disetujui oleh Budi Santoso, Head of Finance · {liveTime3} WIB
@@ -710,11 +846,11 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
               </div>
               <div>
                 <h2 className="text-sm font-bold text-amber-950">
-                  Periode {selectedPeriod} Sedang Dalam Proses Closing
+                  Periode {displayPeriodLabel} Sedang Dalam Proses Closing
                 </h2>
                 <p className="mt-0.5 text-xs text-amber-800">
                   {metrics.pendingCount > 0
-                    ? `${metrics.pendingCount} exception belum diselesaikan sebelum penguncian buku disahkan.`
+                    ? `${metrics.pendingCount} exception aktif belum diselesaikan (${metrics.resolvedCount} telah selesai ditinjau).`
                     : "Seluruh anomali telah selesai ditinjau. Siap untuk disahkan dan dikunci."}
                 </p>
               </div>
@@ -797,7 +933,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                 </p>
               </div>
 
-              {/* Card 3: EXCEPTION */}
+              {/* Card 3: EXCEPTION (FIX BUG-FN-005: Menampilkan jumlah exception aktif secara real-time) */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -807,13 +943,16 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                     <AlertCircle className="h-4 w-4" />
                   </div>
                 </div>
-                <div className="mt-2">
+                <div className="mt-2 flex items-baseline gap-2">
                   <h2 className="text-2xl font-bold text-slate-900">
-                    {metrics.exceptionsCount}
+                    {metrics.pendingCount}
                   </h2>
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    aktif
+                  </span>
                 </div>
                 <p className="mt-2 text-[11px] text-slate-400">
-                  {metrics.resolvedCount} selesai · {metrics.pendingCount} aktif
+                  {metrics.resolvedCount} selesai · {metrics.pendingCount} aktif (dari {metrics.totalAnomaliesCount})
                 </p>
               </div>
 
@@ -845,7 +984,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
           {/* Approval Timeline */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-7">
             <h3 className="text-sm font-bold text-slate-900">Approval Timeline</h3>
-            <p className="text-[11px] text-slate-400">Jejak persetujuan periode {selectedPeriod}</p>
+            <p className="text-[11px] text-slate-400">Jejak persetujuan periode {displayPeriodLabel}</p>
 
             <div className="mt-5 space-y-4">
               {isLoading ? (
@@ -884,8 +1023,10 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                     </div>
                     <div className="flex flex-1 items-start justify-between">
                       <div>
-                        <p className="text-xs font-bold text-slate-900">Review Selesai</p>
-                        <p className="text-[11px] text-slate-400">Finance Controller · {metrics.resolvedCount} Exception Terverifikasi</p>
+                        <p className="text-xs font-bold text-slate-900">Review Exception</p>
+                        <p className="text-[11px] text-slate-400">
+                          Finance Controller · {metrics.resolvedCount} Selesai, {metrics.pendingCount} Aktif
+                        </p>
                       </div>
                       <span className="text-[11px] text-slate-400">{liveTime2}</span>
                     </div>
@@ -1065,12 +1206,12 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                   </div>
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">Otorisasi Penutupan Buku</h3>
-                    <p className="text-[11px] text-slate-400">Penguncian Periode {selectedPeriod}</p>
+                    <p className="text-[11px] text-slate-400">Penguncian Periode {displayPeriodLabel}</p>
                   </div>
                 </div>
                 <button
                   onClick={() => setIsLockModalOpen(false)}
-                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -1088,7 +1229,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-500">Exception Tertunda:</span>
-                    <span className="font-bold text-emerald-600">0 Item (Nihil)</span>
+                    <span className="font-bold text-emerald-600">{metrics.pendingCount} Item</span>
                   </div>
                 </div>
 
@@ -1112,14 +1253,14 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                 <button
                   onClick={() => setIsLockModalOpen(false)}
                   disabled={isActionLoading}
-                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="rounded-lg border border-slate-200 px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   onClick={handleLockPeriod}
                   disabled={isActionLoading}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#10b981] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#059669] disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-[#10b981] px-4 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#059669] disabled:opacity-50 cursor-pointer"
                 >
                   {isActionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Lock className="h-3.5 w-3.5" />}
                   <span>Konfirmasi & Kunci Periode</span>

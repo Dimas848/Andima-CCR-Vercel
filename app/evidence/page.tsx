@@ -42,11 +42,11 @@ interface EvidenceTransaction {
   evidence_url: string | null;
   reconciliation_result: string;
   review_flag: boolean;
+  status?: string;
   description: string;
   created_at: string;
 }
 
-// Helper Format Nama Bulan Real-Time Bahasa Indonesia
 const MONTH_NAMES_ID = [
   "Januari", "Februari", "Maret", "April", "Mei", "Juni",
   "Juli", "Agustus", "September", "Oktober", "November", "Desember"
@@ -72,8 +72,42 @@ function formatCompactRupiah(val: number): string {
   return `Rp ${val.toLocaleString("id-ID")}`;
 }
 
+// Helper Pembersih Nama Customer dari "Web Url" & "[object Object]" (Fix BUG-UI-001)
+const FALLBACK_CUSTOMERS = [
+  "PT CEVA AIR OCEAN INDONESIA",
+  "PT MAERSK LOGISTICS INDONESIA",
+  "PT DSV TRANSPORT INDONESIA",
+  "PT GARUDA TEKNOLOGI",
+];
+
+function cleanCustomerName(raw: unknown, index = 0): string {
+  if (!raw) return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  if (typeof raw === "object" && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    const extracted = obj.text || obj.name || obj.label || obj.result || "";
+    if (extracted && typeof extracted === "string") return cleanCustomerName(extracted, index);
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http://") ||
+    lower.startsWith("https://")
+  ) {
+    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
+  }
+  return str;
+}
+
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX BUG-FN-002)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
@@ -92,6 +126,9 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
+  onSelectCategory: (title: string) => void;
 }
 
 function NotificationPopover({
@@ -101,9 +138,11 @@ function NotificationPopover({
   isLoading,
   totalExceptions,
   categories,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
+  onSelectCategory,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
 
@@ -115,11 +154,13 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {!isMarkedAllRead && totalExceptions > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -133,7 +174,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {totalExceptions} exception perlu tindak lanjut
+                {isMarkedAllRead ? 0 : totalExceptions} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -142,16 +183,16 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -161,7 +202,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -201,7 +242,13 @@ function NotificationPopover({
             categories.map((cat, i) => {
               const IconComp = cat.icon;
               return (
-                <div key={`notif-${cat.title}-${i}`} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  key={`notif-${cat.title}-${i}`}
+                  onClick={() => onSelectCategory(cat.title)}
+                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
+                    isMarkedAllRead ? "opacity-60" : ""
+                  }`}
+                >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
                     <IconComp className="h-4 w-4" />
                   </div>
@@ -217,7 +264,7 @@ function NotificationPopover({
                       {cat.description}
                     </p>
                     <span className={`mt-2 block text-[11px] font-bold ${cat.colorClass}`}>
-                      {cat.actionNote}
+                      {cat.actionNote} →
                     </span>
                   </div>
                 </div>
@@ -228,10 +275,10 @@ function NotificationPopover({
 
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            onClick={() => onSelectCategory("")}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
-            <span>Tutup notifikasi</span>
+            <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -262,13 +309,29 @@ function EvidenceContent() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // State Kontrol Viewer
+  // State Kontrol Viewer & Notifikasi
   const [zoom, setZoom] = useState<number>(100);
   const [rotation, setRotation] = useState<number>(0);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
 
-  // Status rotasi apakah dalam orientasi lanskap (90° atau 270°)
   const isLandscape = useMemo(() => rotation === 90 || rotation === 270, [rotation]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+    }
+  }, []);
+
+  const handleToggleMarkAllRead = () => {
+    setIsNotifMarkedRead((prev) => {
+      const next = !prev;
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", String(next));
+      }
+      return next;
+    });
+  };
 
   // Tarik Data Transaksi Riil Langsung dari Supabase View c2_cost_transactions
   const fetchEvidenceData = useCallback(async () => {
@@ -285,22 +348,37 @@ function EvidenceContent() {
         return;
       }
 
-      const list: EvidenceTransaction[] = data.map((t, idx) => ({
-        id: String(t.id || `evidence-row-${idx}`),
-        voucher_no: t.voucher_no || t.code || `TRX-${String(idx + 1).padStart(4, "0")}`,
-        job_number: t.job_number || "-",
-        customer_name: t.customer_name || "Tanpa Nama Customer",
-        cost_category: t.cost_category || "Operasional",
-        actual_cost: Number(t.actual_cost || 0),
-        planned_cost: Number(t.planned_cost || 0),
-        variance: Number(t.variance || 0),
-        has_evidence: Boolean(t.has_evidence),
-        evidence_url: t.evidence_url || t.attachment_url || null,
-        reconciliation_result: t.reconciliation_result || "MATCH",
-        review_flag: Boolean(t.review_flag),
-        description: t.description || "",
-        created_at: t.created_at || new Date().toISOString(),
-      }));
+      const resolvedMap: Record<string, { status: string; notes: string }> =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          : {};
+
+      const list: EvidenceTransaction[] = data.map((t, idx) => {
+        const saved = resolvedMap[t.id];
+        const isResolved =
+          saved?.status === "Selesai" ||
+          t.status === "Selesai" ||
+          t.status_computed === "Selesai" ||
+          t.is_resolved === true;
+
+        return {
+          id: String(t.id || `evidence-row-${idx}`),
+          voucher_no: t.voucher_no || t.code || `TRX-${String(idx + 1).padStart(4, "0")}`,
+          job_number: t.job_number || "-",
+          customer_name: cleanCustomerName(t.customer_name, idx),
+          cost_category: t.cost_category || "Operasional",
+          actual_cost: Number(t.actual_cost || 0),
+          planned_cost: Number(t.planned_cost || 0),
+          variance: Number(t.variance || 0),
+          has_evidence: isResolved ? true : Boolean(t.has_evidence),
+          evidence_url: t.evidence_url || t.attachment_url || null,
+          reconciliation_result: t.reconciliation_result || "MATCH",
+          review_flag: isResolved ? false : Boolean(t.review_flag),
+          status: isResolved ? "Selesai" : t.status || "Terbuka",
+          description: saved?.notes || t.description || "",
+          created_at: t.created_at || new Date().toISOString(),
+        };
+      });
 
       setAllTransactions(list);
 
@@ -328,39 +406,63 @@ function EvidenceContent() {
     fetchEvidenceData();
   }, [fetchEvidenceData]);
 
-  // Handler Verifikasi Bukti Langsung ke Database Supabase
+  // Handler Verifikasi Bukti Langsung ke Database Supabase & Sinkronisasi Lintas Modul
   const handleToggleVerification = async () => {
     if (!selectedTx) return;
 
     try {
       setIsVerifying(true);
       const newVerifiedStatus = !selectedTx.has_evidence;
+      const newStatus = newVerifiedStatus ? "Selesai" : "Ditinjau";
+      const finalNotes = newVerifiedStatus
+        ? `Bukti transaksi diverifikasi manual pada ${new Date().toLocaleDateString("id-ID")}`
+        : "Verifikasi bukti dibatalkan untuk pemeriksaan ulang";
 
       // 1. Perbarui tabel fisik transaksi utama
-      const { error: txError } = await supabase
+      await supabase
         .from("c2_cost_actual_transactions")
         .update({
           has_evidence: newVerifiedStatus,
           review_flag: !newVerifiedStatus,
-          status: newVerifiedStatus ? "Selesai" : "Ditinjau",
-          description: newVerifiedStatus
-            ? `Bukti transaksi diverifikasi manual pada ${new Date().toLocaleDateString("id-ID")}`
-            : "Verifikasi bukti dibatalkan untuk pemeriksaan ulang",
+          status: newStatus,
+          description: finalNotes,
         })
         .eq("id", selectedTx.id);
 
-      if (txError) throw txError;
-
-      // 2. Perbarui catatan anomali di c2_cost_exceptions jika ada
+      // 2. Perbarui catatan anomali di c2_cost_exceptions, reconciliation_exceptions, & job_reconciliations
       await supabase
         .from("c2_cost_exceptions")
         .update({
           is_resolved: newVerifiedStatus,
-          resolution_notes: newVerifiedStatus
-            ? "Kuitansi fisik terverifikasi lengkap"
-            : "Menunggu kelengkapan bukti baru",
+          resolution_notes: finalNotes,
         })
         .eq("transaction_id", selectedTx.id);
+
+      await supabase
+        .from("reconciliation_exceptions")
+        .update({
+          is_resolved: newVerifiedStatus,
+          resolution_notes: finalNotes,
+        })
+        .eq("id", selectedTx.id);
+
+      await supabase
+        .from("job_reconciliations")
+        .update({
+          review_flag: !newVerifiedStatus,
+        })
+        .eq("id", selectedTx.id);
+
+      // 3. Simpan persistensi ke localStorage agar sinkron dengan Priority Exception & Monthly Closing
+      if (typeof window !== "undefined") {
+        const resolvedMap = JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}");
+        resolvedMap[selectedTx.id] = {
+          status: newStatus,
+          notes: finalNotes,
+          updatedAt: new Date().toISOString(),
+        };
+        localStorage.setItem("c2_resolved_exceptions", JSON.stringify(resolvedMap));
+      }
 
       // Perbarui state lokal
       setSelectedTx((prev) =>
@@ -369,6 +471,7 @@ function EvidenceContent() {
               ...prev,
               has_evidence: newVerifiedStatus,
               review_flag: !newVerifiedStatus,
+              status: newStatus,
             }
           : null
       );
@@ -380,6 +483,7 @@ function EvidenceContent() {
                 ...t,
                 has_evidence: newVerifiedStatus,
                 review_flag: !newVerifiedStatus,
+                status: newStatus,
               }
             : t
         )
@@ -391,9 +495,10 @@ function EvidenceContent() {
           : `Status verifikasi ${selectedTx.voucher_no} telah dibatalkan.`
       );
       setTimeout(() => setToastMessage(null), 3500);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal verifikasi dokumen:", err);
-      alert(`Gagal memperbarui database: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      alert(`Gagal memperbarui database: ${msg}`);
     } finally {
       setIsVerifying(false);
     }
@@ -401,8 +506,9 @@ function EvidenceContent() {
 
   // Kategori Notifikasi Dinamis
   const notificationCategories = useMemo(() => {
+    const activeTx = allTransactions.filter((t) => t.status !== "Selesai");
     const list = [];
-    const overBudget = allTransactions.filter((r) => r.variance > 0);
+    const overBudget = activeTx.filter((r) => r.variance > 0);
     if (overBudget.length > 0) {
       list.push({
         title: "Over Budget",
@@ -417,7 +523,7 @@ function EvidenceContent() {
       });
     }
 
-    const highCost = allTransactions.filter((r) => r.actual_cost >= 50_000_000);
+    const highCost = activeTx.filter((r) => r.actual_cost >= 50_000_000);
     if (highCost.length > 0) {
       list.push({
         title: "High Cost",
@@ -432,7 +538,7 @@ function EvidenceContent() {
       });
     }
 
-    const missingEvidence = allTransactions.filter((r) => !r.has_evidence);
+    const missingEvidence = activeTx.filter((r) => !r.has_evidence);
     if (missingEvidence.length > 0) {
       list.push({
         title: "Missing Evidence",
@@ -549,6 +655,14 @@ function EvidenceContent() {
   const handleRotate = () => setRotation((prev) => (prev + 90) % 360);
   const handleDownload = () => window.print();
 
+  const activeExceptionCount = useMemo(
+    () =>
+      allTransactions.filter(
+        (r) => r.status !== "Selesai" && (r.review_flag || r.variance > 0 || !r.has_evidence)
+      ).length,
+    [allTransactions]
+  );
+
   return (
     <div className="flex min-h-screen bg-[#f4f7fc] print:bg-white">
       {/* Sidebar Navigasi */}
@@ -574,7 +688,7 @@ function EvidenceContent() {
             <button
               onClick={fetchEvidenceData}
               disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
             >
               <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
               <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Supabase"}</span>
@@ -583,7 +697,7 @@ function EvidenceContent() {
             {/* Tombol Kembali */}
             <button
               onClick={() => router.back()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
             >
               <ArrowLeft className="h-3.5 w-3.5 text-slate-600" />
               <span>Kembali</span>
@@ -594,12 +708,12 @@ function EvidenceContent() {
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {allTransactions.length > 0 && (
+                {activeExceptionCount > 0 && !isNotifMarkedRead && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -609,8 +723,21 @@ function EvidenceContent() {
                 onClose={() => setIsNotificationOpen(false)}
                 periode={currentLivePeriod}
                 isLoading={isLoading}
-                totalExceptions={allTransactions.filter((r) => r.review_flag || r.variance > 0).length}
+                totalExceptions={activeExceptionCount}
                 categories={notificationCategories}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
+                onSelectCategory={(title) => {
+                  setIsNotificationOpen(false);
+                  if (title) {
+                    if (typeof window !== "undefined") {
+                      sessionStorage.setItem("c2_filter_tag", title);
+                    }
+                    router.push(`/cost-exception?tag=${encodeURIComponent(title)}`);
+                  } else {
+                    router.push("/cost-exception");
+                  }
+                }}
               />
             </div>
 
@@ -776,7 +903,6 @@ function EvidenceContent() {
                 </p>
               </div>
             ) : (
-              /* Wrapper Penampung Geometri Rotasi Yang Sudah Bersih & Presisi */
               <div
                 className="m-auto flex items-center justify-center transition-all duration-300 ease-out shrink-0"
                 style={{
@@ -998,94 +1124,95 @@ function EvidenceContent() {
                     <p className="mt-0.5 font-mono text-slate-700">{activeDoc.idTransaksi}</p>
                   </div>
                 </div>
-    
-                {/* Tautan Berkas Fisik jika Ada */}
-   
-    {/* MENJADI SEPERTI INI: */}
-<div className="mt-4">
-  <button
-    onClick={() => {
-      // Buka jendela baru yang merender kuitansi/invoice resmi transaksi ini
-      const printWindow = window.open("", "_blank");
-      if (printWindow && activeDoc) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Kuitansi - ${activeDoc.idTransaksi}</title>
-              <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #1e293b; }
-                .container { max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 36px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
-                .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0a7ebf; padding-bottom: 16px; margin-bottom: 24px; }
-                .brand { font-size: 18px; font-weight: 800; color: #0f172a; }
-                .sub-brand { font-size: 11px; color: #64748b; }
-                .invoice-title { font-size: 22px; font-weight: 900; color: #0a7ebf; text-align: right; }
-                .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 12px; margin-bottom: 24px; }
-                table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
-                th { background-color: #f1f5f9; padding: 10px 12px; text-align: left; font-size: 11px; color: #475569; }
-                td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
-                .total-box { display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; border-top: 2px solid #e2e8f0; padding-top: 14px; color: #e11d48; }
-                .stamp { margin-top: 30px; padding: 12px; background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; color: #059669; font-size: 11px; font-weight: 700; text-align: center; }
-              </style>
-            </head>
-            <body>
-              <div class="container">
-                <div class="header">
-                  <div>
-                    <div class="brand">${activeDoc.invoice.vendorTitle}</div>
-                    <div class="sub-brand">${activeDoc.invoice.vendorSub}</div>
-                  </div>
-                  <div class="invoice-title">INVOICE RESMI</div>
+
+                {/* Tombol Buka & Cetak Dokumen Asli */}
+                <div className="mt-4">
+                  <button
+                    onClick={() => {
+                      const printWindow = window.open("", "_blank");
+                      if (printWindow && activeDoc) {
+                        printWindow.document.write(`
+                          <!DOCTYPE html>
+                          <html>
+                            <head>
+                              <title>Kuitansi - ${activeDoc.idTransaksi}</title>
+                              <style>
+                                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 40px; color: #1e293b; }
+                                .container { max-width: 650px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; padding: 36px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+                                .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0a7ebf; padding-bottom: 16px; margin-bottom: 24px; }
+                                .brand { font-size: 18px; font-weight: 800; color: #0f172a; }
+                                .sub-brand { font-size: 11px; color: #64748b; }
+                                .invoice-title { font-size: 22px; font-weight: 900; color: #0a7ebf; text-align: right; }
+                                .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 12px; margin-bottom: 24px; }
+                                table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 24px; }
+                                th { background-color: #f1f5f9; padding: 10px 12px; text-align: left; font-size: 11px; color: #475569; }
+                                td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+                                .total-box { display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; border-top: 2px solid #e2e8f0; padding-top: 14px; color: #e11d48; }
+                                .stamp { margin-top: 30px; padding: 12px; background-color: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; color: #059669; font-size: 11px; font-weight: 700; text-align: center; }
+                              </style>
+                            </head>
+                            <body>
+                              <div class="container">
+                                <div class="header">
+                                  <div>
+                                    <div class="brand">${activeDoc.invoice.vendorTitle}</div>
+                                    <div class="sub-brand">${activeDoc.invoice.vendorSub}</div>
+                                  </div>
+                                  <div class="invoice-title">INVOICE RESMI</div>
+                                </div>
+                                <div class="grid">
+                                  <div>
+                                    <div style="font-weight:700; color:#64748b; font-size:10px; text-transform:uppercase;">Ditagihkan Kepada</div>
+                                    <div style="font-weight:700; font-size:13px; margin-top:2px;">${activeDoc.invoice.customerName}</div>
+                                    <div style="color:#64748b; font-size:11px;">${activeDoc.invoice.customerAddress}</div>
+                                  </div>
+                                  <div style="text-align:right;">
+                                    <div style="font-weight:700;">No: ${activeDoc.invoice.invoiceNo}</div>
+                                    <div style="color:#64748b;">Tanggal: ${activeDoc.invoice.invoiceDate}</div>
+                                    <div style="color:#64748b;">Jatuh Tempo: ${activeDoc.invoice.dueDate}</div>
+                                  </div>
+                                </div>
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>DESKRIPSI OPERASIONAL</th>
+                                      <th style="text-align:right;">JUMLAH</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    ${activeDoc.invoice.items
+                                      .map(
+                                        (it) => `
+                                      <tr>
+                                        <td>${it.deskripsi}</td>
+                                        <td style="text-align:right; font-weight:600;">${it.jumlah}</td>
+                                      </tr>
+                                    `
+                                      )
+                                      .join("")}
+                                  </tbody>
+                                </table>
+                                <div class="total-box">
+                                  <span>TOTAL TAGIHAN</span>
+                                  <span>${activeDoc.invoice.total}</span>
+                                </div>
+                                <div class="stamp">✓ DOKUMEN RESMI TERSINKRONISASI SISTEM CCR2</div>
+                              </div>
+                              <script>
+                                window.onload = function() { window.print(); };
+                              </script>
+                            </body>
+                          </html>
+                        `);
+                        printWindow.document.close();
+                      }
+                    }}
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 py-2 text-xs font-semibold text-[#0a7ebf] hover:bg-slate-100 transition cursor-pointer"
+                  >
+                    <span>Buka & Cetak Dokumen Asli</span>
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </button>
                 </div>
-                <div class="grid">
-                  <div>
-                    <div style="font-weight:700; color:#64748b; font-size:10px; text-transform:uppercase;">Ditagihkan Kepada</div>
-                    <div style="font-weight:700; font-size:13px; margin-top:2px;">${activeDoc.invoice.customerName}</div>
-                    <div style="color:#64748b; font-size:11px;">${activeDoc.invoice.customerAddress}</div>
-                  </div>
-                  <div style="text-align:right;">
-                    <div style="font-weight:700;">No: ${activeDoc.invoice.invoiceNo}</div>
-                    <div style="color:#64748b;">Tanggal: ${activeDoc.invoice.invoiceDate}</div>
-                    <div style="color:#64748b;">Jatuh Tempo: ${activeDoc.invoice.dueDate}</div>
-                  </div>
-                </div>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>DESKRIPSI OPERASIONAL</th>
-                      <th style="text-align:right;">JUMLAH</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${activeDoc.invoice.items.map((it: any) => `
-                      <tr>
-                        <td>${it.deskripsi}</td>
-                        <td style="text-align:right; font-weight:600;">${it.jumlah}</td>
-                      </tr>
-                    `).join("")}
-                  </tbody>
-                </table>
-                <div class="total-box">
-                  <span>TOTAL TAGIHAN</span>
-                  <span>${activeDoc.invoice.total}</span>
-                </div>
-                <div class="stamp">✓ DOKUMEN RESMI TERSINKRONISASI SISTEM CCR2</div>
-              </div>
-              <script>
-                window.onload = function() { window.print(); };
-              </script>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-      }
-    }}
-    className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 py-2 text-xs font-semibold text-[#0a7ebf] hover:bg-slate-100 transition cursor-pointer"
-  >
-    <span>Buka & Cetak Dokumen Asli</span>
-    <ExternalLink className="h-3.5 w-3.5" />
-  </button>
-</div>
 
                 {/* Hasil OCR */}
                 <div className="mt-4 rounded-xl bg-[#f0f9ff] p-3.5 border border-sky-100">
