@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import ExcelJS from "exceljs";
 import {
   Bell,
@@ -19,7 +20,6 @@ import {
   Lock,
   RotateCw,
   X,
-  CheckCircle2,
 } from "lucide-react";
 
 import Sidebar from "@/components/sidebar";
@@ -72,14 +72,13 @@ function formatCompactRupiah(val: number): string {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (DINAMIS & SKELETON)
+// SUB-KOMPONEN: NOTIFICATION POPOVER (OTOMATIS HILANG SAAT DIKLIK)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
   onClose: () => void;
   periode: string;
   isLoading: boolean;
-  totalExceptions: number;
   categories: {
     title: string;
     count: number;
@@ -91,6 +90,10 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  dismissedTags: string[];
+  isMarkedAllRead: boolean;
+  onToggleMarkAllRead: () => void;
+  onSelectCategory: (title: string) => void;
 }
 
 function NotificationPopover({
@@ -98,13 +101,21 @@ function NotificationPopover({
   onClose,
   periode,
   isLoading,
-  totalExceptions,
   categories,
+  dismissedTags,
+  isMarkedAllRead,
+  onToggleMarkAllRead,
+  onSelectCategory,
 }: NotificationPopoverProps) {
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
 
   if (!isOpen) return null;
+
+  const visibleCategories = isMarkedAllRead
+    ? []
+    : categories.filter((c) => !dismissedTags.includes(c.title));
+
+  const remainingTotal = visibleCategories.reduce((acc, c) => acc + c.count, 0);
 
   return (
     <>
@@ -114,11 +125,13 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              {remainingTotal > 0 && (
+                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
+              )}
             </div>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
             >
               <X className="h-4 w-4" />
             </button>
@@ -132,7 +145,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {totalExceptions} exception perlu tindak lanjut
+                {remainingTotal} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -141,16 +154,16 @@ function NotificationPopover({
           )}
 
           <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline"
+            onClick={onToggleMarkAllRead}
+            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            Tandai semua dibaca
+            {visibleCategories.length === 0 ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
             <button
               onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition ${
+              className={`pb-2 text-xs font-bold transition cursor-pointer ${
                 activeTab === "semua"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
                   : "text-slate-400 hover:text-slate-600"
@@ -160,7 +173,7 @@ function NotificationPopover({
             </button>
             <button
               onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition ${
+              className={`pb-2 text-xs font-medium transition cursor-pointer ${
                 activeTab === "belum_dibaca"
                   ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
                   : "text-slate-400 hover:text-slate-600"
@@ -188,19 +201,19 @@ function NotificationPopover({
                 </div>
               ))}
             </div>
-          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+          ) : visibleCategories.length === 0 ? (
             <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditandai dibaca.
-            </div>
-          ) : categories.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Tidak ada notifikasi aktif saat ini.
+              Semua notifikasi telah ditinjau / ditandai dibaca.
             </div>
           ) : (
-            categories.map((cat, i) => {
+            visibleCategories.map((cat, i) => {
               const IconComp = cat.icon;
               return (
-                <div key={`notif-export-${cat.title}-${i}`} className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
+                <div
+                  key={`notif-export-${cat.title}-${i}`}
+                  onClick={() => onSelectCategory(cat.title)}
+                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer"
+                >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
                     <IconComp className="h-4 w-4" />
                   </div>
@@ -216,7 +229,7 @@ function NotificationPopover({
                       {cat.description}
                     </p>
                     <span className={`mt-2 block text-[11px] font-bold ${cat.colorClass}`}>
-                      {cat.actionNote}
+                      {cat.actionNote} →
                     </span>
                   </div>
                 </div>
@@ -227,10 +240,10 @@ function NotificationPopover({
 
         <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
           <button
-            onClick={onClose}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d]"
+            onClick={() => onSelectCategory("")}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
           >
-            <span>Tutup notifikasi</span>
+            <span>Lihat semua exception</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -243,6 +256,7 @@ function NotificationPopover({
 // KOMPONEN UTAMA: EXPORT REPORT
 // =========================================================================
 export default function ExportReportPage() {
+  const router = useRouter();
   const currentPeriod = useMemo(() => getDynamicPeriod(0), []);
 
   const [selectedReportType, setSelectedReportType] = useState<string>("Monthly Cost Detail");
@@ -256,13 +270,46 @@ export default function ExportReportPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeStep, setActiveStep] = useState(4);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
+  const [dismissedNotifTags, setDismissedNotifTags] = useState<string[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // State Data Murni dari Database Supabase
-  const [dbTransactions, setDbTransactions] = useState<any[]>([]);
+  const [dbTransactions, setDbTransactions] = useState<Record<string, unknown>[]>([]);
   const [reportsList, setReportsList] = useState<ReportHistoryRow[]>([]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+      try {
+        const saved = JSON.parse(localStorage.getItem("c2_dismissed_notif_tags") || "[]");
+        if (Array.isArray(saved)) setDismissedNotifTags(saved);
+      } catch {
+        setDismissedNotifTags([]);
+      }
+    }
+  }, []);
+
+  const handleToggleMarkAllRead = () => {
+    if (isNotifMarkedRead || dismissedNotifTags.length >= 3) {
+      setIsNotifMarkedRead(false);
+      setDismissedNotifTags([]);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", "false");
+        localStorage.removeItem("c2_dismissed_notif_tags");
+      }
+    } else {
+      const all = ["Over Budget", "High Cost", "Missing Evidence"];
+      setIsNotifMarkedRead(true);
+      setDismissedNotifTags(all);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", "true");
+        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(all));
+      }
+    }
+  };
 
   // 1. Tarik Data Nyata dari Supabase View c2_cost_transactions
   const fetchLiveDatabase = useCallback(async () => {
@@ -282,7 +329,9 @@ export default function ExportReportPage() {
       setDbTransactions(data);
 
       const totalRows = data.length;
-      const totalExceptions = data.filter((t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence).length;
+      const totalExceptions = data.filter(
+        (t) => t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence
+      ).length;
       const totalCust = new Set(data.map((t) => t.customer_name).filter(Boolean)).size;
 
       // Inisialisasi riwayat laporan awal
@@ -340,14 +389,14 @@ export default function ExportReportPage() {
 
   // Dropdown Periode Dinamis Berdasarkan Data Database
   const dynamicPeriodOptions = useMemo(() => {
-    const list = Array.from(new Set(dbTransactions.map((t) => t.period_month).filter(Boolean)));
+    const list = Array.from(new Set(dbTransactions.map((t) => String(t.period_month || "")).filter(Boolean)));
     if (list.length > 0) return list;
     return [getDynamicPeriod(0), getDynamicPeriod(1)];
   }, [dbTransactions]);
 
   // Dropdown Customer Dinamis Berdasarkan Data Database
   const dynamicCustomerOptions = useMemo(() => {
-    const unique = Array.from(new Set(dbTransactions.map((t) => t.customer_name))).filter(Boolean);
+    const unique = Array.from(new Set(dbTransactions.map((t) => String(t.customer_name || "")))).filter(Boolean);
     return ["Semua Customer", ...unique];
   }, [dbTransactions]);
 
@@ -414,6 +463,11 @@ export default function ExportReportPage() {
 
     return list;
   }, [activeDataset]);
+
+  const hasUnreadNotif = useMemo(() => {
+    if (isNotifMarkedRead) return false;
+    return notificationCategories.some((c) => !dismissedNotifTags.includes(c.title));
+  }, [notificationCategories, isNotifMarkedRead, dismissedNotifTags]);
 
   // Generator File Excel Dinamis Sesuai Jenis Laporan
   const generateAndDownloadWorkbook = async (
@@ -610,7 +664,7 @@ export default function ExportReportPage() {
 
         const custMap = new Map<string, { actual: number; planned: number; exc: number }>();
         dataset.forEach((t) => {
-          const name = t.customer_name || "Tanpa Nama";
+          const name = String(t.customer_name || "Tanpa Nama");
           const curr = custMap.get(name) || { actual: 0, planned: 0, exc: 0 };
           const isExc = Boolean(t.review_flag || Number(t.variance || 0) > 0 || !t.has_evidence);
           custMap.set(name, {
@@ -679,9 +733,10 @@ export default function ExportReportPage() {
 
       setToastMessage(`Laporan ${reportType} (${targetPeriod}) berhasil diunduh!`);
       setTimeout(() => setToastMessage(null), 3500);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Gagal ekspor Excel:", err);
-      alert(`Gagal membuat berkas Excel: ${err.message}`);
+      const msg = err instanceof Error ? err.message : "Terjadi kesalahan";
+      alert(`Gagal membuat berkas Excel: ${msg}`);
     }
   };
 
@@ -745,12 +800,12 @@ export default function ExportReportPage() {
               <button
                 aria-label="Lihat Notifikasi"
                 onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
+                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
                   isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {activeExceptionCount > 0 && (
+                {hasUnreadNotif && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -760,8 +815,24 @@ export default function ExportReportPage() {
                 onClose={() => setIsNotificationOpen(false)}
                 periode={periode}
                 isLoading={isLoading}
-                totalExceptions={activeExceptionCount}
                 categories={notificationCategories}
+                dismissedTags={dismissedNotifTags}
+                isMarkedAllRead={isNotifMarkedRead}
+                onToggleMarkAllRead={handleToggleMarkAllRead}
+                onSelectCategory={(title) => {
+                  setIsNotificationOpen(false);
+                  if (title) {
+                    const nextDismissed = Array.from(new Set([...dismissedNotifTags, title]));
+                    setDismissedNotifTags(nextDismissed);
+                    if (typeof window !== "undefined") {
+                      localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(nextDismissed));
+                      sessionStorage.setItem("c2_filter_tag", title);
+                    }
+                    router.push("/cost-exception");
+                  } else {
+                    router.push("/cost-exception");
+                  }
+                }}
               />
             </div>
 
@@ -1016,7 +1087,7 @@ export default function ExportReportPage() {
 
               <div className="mt-5 flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                  <div className={`flex h-6 w-6 items-center justify-center rounded-full text-white text-[11px] font-bold ${activeStep >= 1 ? "bg-[#10b981]" : "bg-slate-300"}`}>
                     1
                   </div>
                   <div>
@@ -1028,7 +1099,7 @@ export default function ExportReportPage() {
                 <span className="text-slate-400 text-xs">→</span>
 
                 <div className="flex items-center gap-2">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                  <div className={`flex h-6 w-6 items-center justify-center rounded-full text-white text-[11px] font-bold ${activeStep >= 2 ? "bg-[#10b981]" : "bg-slate-300"}`}>
                     2
                   </div>
                   <div>
@@ -1040,7 +1111,7 @@ export default function ExportReportPage() {
                 <span className="text-slate-400 text-xs">→</span>
 
                 <div className="flex items-center gap-2">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white text-[11px] font-bold">
+                  <div className={`flex h-6 w-6 items-center justify-center rounded-full text-white text-[11px] font-bold ${activeStep >= 3 ? "bg-[#10b981]" : "bg-slate-300"}`}>
                     3
                   </div>
                   <div>
@@ -1052,7 +1123,7 @@ export default function ExportReportPage() {
                 <span className="text-slate-400 text-xs">→</span>
 
                 <div className="flex items-center gap-2">
-                  <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#0a7ebf] text-white text-[11px] font-bold">
+                  <div className={`flex h-6 w-6 items-center justify-center rounded-full text-white text-[11px] font-bold ${activeStep >= 4 ? "bg-[#0a7ebf]" : "bg-slate-300"}`}>
                     4
                   </div>
                   <div>
@@ -1063,10 +1134,14 @@ export default function ExportReportPage() {
               </div>
 
               <div className="mt-3 h-1 w-full rounded-full bg-slate-100 overflow-hidden">
-                <div className="h-full w-full bg-[#10b981]" />
+                <div
+                  className="h-full bg-[#10b981] transition-all duration-300"
+                  style={{ width: `${(activeStep / 4) * 100}%` }}
+                />
               </div>
             </div>
 
+            {/* Banner Status Laporan Siap (Tanpa Tombol Unduh Excel Ganda sesuai Masukan QA) */}
             <div className="mt-5 flex items-center justify-between rounded-xl border border-emerald-100 bg-[#ecfdf5] px-4 py-3">
               <div className="flex items-center gap-3">
                 <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#10b981] text-white">
@@ -1080,14 +1155,9 @@ export default function ExportReportPage() {
                 </div>
               </div>
 
-              <button
-                onClick={() => generateAndDownloadWorkbook(selectedReportType, periode, selectedCustomer)}
-                disabled={activeDataset.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-[#0a7ebf] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-[#08689d] transition disabled:opacity-50 cursor-pointer"
-              >
-                <Download className="h-3.5 w-3.5" />
-                <span>Unduh Excel</span>
-              </button>
+              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold text-[#059669]">
+                Tervalidasi
+              </span>
             </div>
           </div>
 
