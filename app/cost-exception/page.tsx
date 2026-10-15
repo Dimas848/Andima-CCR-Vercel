@@ -34,6 +34,8 @@ export interface ExceptionItem {
   id: string;
   dbId: string;
   customer: string;
+  branch: string;
+  period: string;
   jobNumber?: string;
   nominal: number;
   tipeMasalah: AnomalyTag;
@@ -102,14 +104,32 @@ function cleanCustomerName(raw: unknown, index = 0): string {
   return str;
 }
 
+function cleanBranchName(raw: unknown): string {
+  if (!raw || typeof raw === "object") return "Jakarta Pusat";
+  const str = String(raw).trim();
+  const lower = str.toLowerCase();
+  if (
+    !str ||
+    str === "-" ||
+    lower === "web url" ||
+    lower === "web_url" ||
+    lower.includes("[object object]") ||
+    lower === "null" ||
+    lower === "undefined" ||
+    lower.startsWith("http")
+  ) {
+    return "Jakarta Pusat";
+  }
+  return str;
+}
+
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX QA 2: Hilang saat diklik)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
   onClose: () => void;
   periode: string;
-  totalExceptionCount: number;
   isLoading: boolean;
   categorySummaries: {
     tag: AnomalyTag;
@@ -122,6 +142,7 @@ interface NotificationPopoverProps {
     textColor: string;
     badgeBg: string;
   }[];
+  dismissedTags: string[];
   onSelectCategory: (tag: AnomalyTag) => void;
   isMarkedAllRead: boolean;
   onToggleMarkAllRead: () => void;
@@ -131,9 +152,9 @@ function NotificationPopover({
   isOpen,
   onClose,
   periode,
-  totalExceptionCount,
   isLoading,
   categorySummaries,
+  dismissedTags,
   onSelectCategory,
   isMarkedAllRead,
   onToggleMarkAllRead,
@@ -141,6 +162,12 @@ function NotificationPopover({
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
 
   if (!isOpen) return null;
+
+  const visibleSummaries = isMarkedAllRead
+    ? []
+    : categorySummaries.filter((cat) => !dismissedTags.includes(cat.tag));
+
+  const remainingTotal = visibleSummaries.reduce((acc, c) => acc + c.count, 0);
 
   return (
     <>
@@ -150,7 +177,7 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {!isMarkedAllRead && totalExceptionCount > 0 && (
+              {remainingTotal > 0 && (
                 <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
               )}
             </div>
@@ -170,7 +197,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {isMarkedAllRead ? 0 : totalExceptionCount} exception perlu tindak lanjut
+                {remainingTotal} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -182,7 +209,7 @@ function NotificationPopover({
             onClick={onToggleMarkAllRead}
             className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
+            {visibleSummaries.length === 0 ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
@@ -226,24 +253,18 @@ function NotificationPopover({
                 </div>
               ))}
             </div>
-          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+          ) : visibleSummaries.length === 0 ? (
             <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditandai dibaca.
-            </div>
-          ) : categorySummaries.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Tidak ada anomali biaya saat ini.
+              Semua notifikasi telah ditinjau / ditandai dibaca.
             </div>
           ) : (
-            categorySummaries.map((cat) => {
+            visibleSummaries.map((cat) => {
               const IconComp = cat.icon;
               return (
                 <div
                   key={cat.tag}
                   onClick={() => onSelectCategory(cat.tag)}
-                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer group ${
-                    isMarkedAllRead ? "opacity-60" : ""
-                  }`}
+                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer group"
                   title={`Klik untuk memfilter tabel ke ${cat.tag}`}
                 >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgColor} ${cat.textColor}`}>
@@ -297,15 +318,19 @@ export default function CostExceptionPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Filter States
+  // Filter States (Termasuk Filter PT, Cabang/Kota, dan Periode yang dikirim dari Dashboard)
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState<string>("Semua Tipe");
   const [selectedStatus, setSelectedStatus] = useState<string>("Semua Status");
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState<string>("ALL");
+  const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>("ALL");
+  const [selectedPeriodFilter, setSelectedPeriodFilter] = useState<string>("ALL");
   const [isSlaFilterActive, setIsSlaFilterActive] = useState<boolean>(false);
 
   // State Notifikasi
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isNotifMarkedRead, setIsNotifMarkedRead] = useState<boolean>(false);
+  const [dismissedNotifTags, setDismissedNotifTags] = useState<string[]>([]);
 
   // State Rule Modal & Tindak Lanjut Resolusi
   const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
@@ -328,26 +353,61 @@ export default function CostExceptionPage() {
       const savedVariance = localStorage.getItem("c2_rule_variance");
       const savedHighCost = localStorage.getItem("c2_rule_highcost");
       const savedNotifRead = localStorage.getItem("c2_notif_read");
+      const savedDismissed = localStorage.getItem("c2_dismissed_notif_tags");
+
       const filterFromNotif = sessionStorage.getItem("c2_filter_tag");
+      const filterCustomerFromDash = sessionStorage.getItem("c2_filter_customer");
+      const filterBranchFromDash = sessionStorage.getItem("c2_filter_branch");
+      const filterPeriodFromDash = sessionStorage.getItem("c2_filter_period");
 
       if (savedVariance) setRuleBudgetVariance(savedVariance);
       if (savedHighCost) setRuleHighCostLimit(savedHighCost);
       if (savedNotifRead === "true") setIsNotifMarkedRead(true);
+      if (savedDismissed) {
+        try {
+          const parsed = JSON.parse(savedDismissed);
+          if (Array.isArray(parsed)) setDismissedNotifTags(parsed);
+        } catch {
+          setDismissedNotifTags([]);
+        }
+      }
+
       if (filterFromNotif) {
         setSelectedTag(filterFromNotif);
         sessionStorage.removeItem("c2_filter_tag");
+      }
+      if (filterCustomerFromDash) {
+        setSelectedCustomerFilter(filterCustomerFromDash);
+        sessionStorage.removeItem("c2_filter_customer");
+      }
+      if (filterBranchFromDash) {
+        setSelectedBranchFilter(filterBranchFromDash);
+        sessionStorage.removeItem("c2_filter_branch");
+      }
+      if (filterPeriodFromDash) {
+        setSelectedPeriodFilter(filterPeriodFromDash);
+        sessionStorage.removeItem("c2_filter_period");
       }
     }
   }, []);
 
   const handleToggleMarkAllRead = () => {
-    setIsNotifMarkedRead((prev) => {
-      const next = !prev;
+    if (isNotifMarkedRead || dismissedNotifTags.length >= 4) {
+      setIsNotifMarkedRead(false);
+      setDismissedNotifTags([]);
       if (typeof window !== "undefined") {
-        localStorage.setItem("c2_notif_read", String(next));
+        localStorage.setItem("c2_notif_read", "false");
+        localStorage.removeItem("c2_dismissed_notif_tags");
       }
-      return next;
-    });
+    } else {
+      const all: AnomalyTag[] = ["Over Budget", "High Cost", "Missing Evidence", "Duplicate Data"];
+      setIsNotifMarkedRead(true);
+      setDismissedNotifTags(all);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", "true");
+        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(all));
+      }
+    }
   };
 
   // Tarik Data Live dari Supabase (100% Sinkron dengan Tabel Daftar Exception & Dashboard)
@@ -372,7 +432,7 @@ export default function CostExceptionPage() {
       const varianceThresholdPct = Number(ruleBudgetVariance) || 0;
       const highCostThreshold = Number(ruleHighCostLimit) || 50_000_000;
 
-      // Hanya masukkan 18 transaksi anomali (abaikan transaksi normal MATCH)
+      // Hanya masukkan transaksi anomali (abaikan transaksi normal MATCH)
       const anomalyRecords = records.filter((item) => {
         const actual = Number(item.actual_cost || 0);
         const planned = Number(item.planned_cost || 0);
@@ -428,11 +488,8 @@ export default function CostExceptionPage() {
           prio = "High";
         }
 
-        // Hanya gunakan status yang benar-benar diubah oleh user agar 10 baris di halaman 2 & 3 tidak otomatis menjadi Selesai
         const savedEntry = resolvedMap[item.id];
         const stat: ExceptionStatus = savedEntry?.status || "Terbuka";
-
-        // Sinkronkan SLA Kritis dengan transaksi berprioritas Critical yang belum Selesai
         const isSlaExceeded = prio === "Critical" && stat !== "Selesai";
 
         const generatedId =
@@ -443,6 +500,8 @@ export default function CostExceptionPage() {
           id: generatedId,
           dbId: item.id || `db-${idx}`,
           customer: cleanCustomerName(item.customer_name, idx),
+          branch: cleanBranchName(item.branch_code),
+          period: item.period_month || currentLivePeriod,
           jobNumber: item.job_number || "-",
           nominal: actual,
           tipeMasalah: tag,
@@ -461,7 +520,7 @@ export default function CostExceptionPage() {
       setIsSyncing(false);
       setIsLoading(false);
     }
-  }, [ruleBudgetVariance, ruleHighCostLimit]);
+  }, [ruleBudgetVariance, ruleHighCostLimit, currentLivePeriod]);
 
   useEffect(() => {
     fetchExceptionsFromSupabase();
@@ -477,8 +536,13 @@ export default function CostExceptionPage() {
     };
   }, [fetchExceptionsFromSupabase]);
 
-  // Handler Klik Kartu Notifikasi
+  // PERBAIKAN QA 2: Saat item notifikasi diklik, langsung sembunyikan item tersebut dari daftar notifikasi & filter tabel
   const handleSelectCategoryFromNotif = (tag: AnomalyTag) => {
+    const updated = Array.from(new Set([...dismissedNotifTags, tag]));
+    setDismissedNotifTags(updated);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(updated));
+    }
     setSelectedTag(tag);
     setIsSlaFilterActive(false);
     setCurrentPage(1);
@@ -578,10 +642,26 @@ export default function CostExceptionPage() {
     }
   };
 
-  // Kalkulasi Metrik Dinamis: Menghitung tepat baris yang belum Selesai di Daftar Exception
+  // PERBAIKAN QA 1: Saring data berdasarkan filter PT, Cabang/Kota, dan Periode yang dikirim dari Dashboard
+  const scopedData = useMemo(() => {
+    return data.filter((item) => {
+      const matchCust =
+        selectedCustomerFilter === "ALL" ||
+        item.customer.toLowerCase() === selectedCustomerFilter.toLowerCase();
+      const matchBranch =
+        selectedBranchFilter === "ALL" ||
+        item.branch.toLowerCase() === selectedBranchFilter.toLowerCase();
+      const matchPeriod =
+        selectedPeriodFilter === "ALL" ||
+        item.period === selectedPeriodFilter;
+      return matchCust && matchBranch && matchPeriod;
+    });
+  }, [data, selectedCustomerFilter, selectedBranchFilter, selectedPeriodFilter]);
+
+  // Kalkulasi Metrik Dinamis mengikuti filter PT & Kota yang aktif
   const metrics = useMemo(() => {
-    const activeData = data.filter((d) => d.status !== "Selesai");
-    const resolvedCount = data.filter((d) => d.status === "Selesai").length;
+    const activeData = scopedData.filter((d) => d.status !== "Selesai");
+    const resolvedCount = scopedData.filter((d) => d.status === "Selesai").length;
     const total = activeData.length;
     const overBudgetItems = activeData.filter((d) => d.tipeMasalah === "Over Budget");
     const highCostItems = activeData.filter((d) => d.tipeMasalah === "High Cost");
@@ -601,7 +681,7 @@ export default function CostExceptionPage() {
 
     return {
       total,
-      totalAll: data.length,
+      totalAll: scopedData.length,
       resolvedCount,
       overBudgetCount: overBudgetItems.length,
       overBudgetNominal,
@@ -616,11 +696,11 @@ export default function CostExceptionPage() {
       mediumCount,
       lowCount,
     };
-  }, [data]);
+  }, [scopedData]);
 
   // Ringkasan Kategori Dinamis untuk Popover Notifikasi
   const categorySummaries = useMemo(() => {
-    const activeData = data.filter((d) => d.status !== "Selesai");
+    const activeData = scopedData.filter((d) => d.status !== "Selesai");
     const categories: {
       tag: AnomalyTag;
       count: number;
@@ -694,11 +774,16 @@ export default function CostExceptionPage() {
     }
 
     return categories;
-  }, [data]);
+  }, [scopedData]);
 
-  // Filter Bar Dinamis
+  const hasUnreadNotif = useMemo(() => {
+    if (isNotifMarkedRead) return false;
+    return categorySummaries.some((c) => !dismissedNotifTags.includes(c.tag));
+  }, [categorySummaries, isNotifMarkedRead, dismissedNotifTags]);
+
+  // Filter Bar Dinamis (Mengikuti PT & Kota dari Dashboard + Filter Tipe/Status/Search)
   const filteredData = useMemo(() => {
-    return data.filter((item) => {
+    return scopedData.filter((item) => {
       const matchSearch =
         item.customer.toLowerCase().includes(search.toLowerCase()) ||
         item.id.toLowerCase().includes(search.toLowerCase()) ||
@@ -710,7 +795,7 @@ export default function CostExceptionPage() {
 
       return matchSearch && matchTag && matchStatus && matchSla;
     });
-  }, [data, search, selectedTag, selectedStatus, isSlaFilterActive]);
+  }, [scopedData, search, selectedTag, selectedStatus, isSlaFilterActive]);
 
   const totalItems = filteredData.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
@@ -830,7 +915,7 @@ export default function CostExceptionPage() {
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {metrics.total > 0 && !isNotifMarkedRead && (
+                {hasUnreadNotif && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -839,9 +924,9 @@ export default function CostExceptionPage() {
                 isOpen={isNotificationOpen}
                 onClose={() => setIsNotificationOpen(false)}
                 periode={currentLivePeriod}
-                totalExceptionCount={metrics.total}
                 isLoading={isLoading}
                 categorySummaries={categorySummaries}
+                dismissedTags={dismissedNotifTags}
                 onSelectCategory={handleSelectCategoryFromNotif}
                 isMarkedAllRead={isNotifMarkedRead}
                 onToggleMarkAllRead={handleToggleMarkAllRead}
@@ -1074,7 +1159,7 @@ export default function CostExceptionPage() {
           {/* Header Tabel & Filter Bar */}
           <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-bold text-slate-900">Daftar Exception</h3>
                 {selectedTag !== "Semua Tipe" && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-50 border border-sky-200 px-2.5 py-0.5 text-[10px] font-bold text-[#0a7ebf]">
@@ -1082,6 +1167,39 @@ export default function CostExceptionPage() {
                     <button
                       onClick={() => setSelectedTag("Semua Tipe")}
                       className="hover:text-[#08689d] font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+                {selectedCustomerFilter !== "ALL" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                    <span>PT: {selectedCustomerFilter}</span>
+                    <button
+                      onClick={() => setSelectedCustomerFilter("ALL")}
+                      className="hover:text-indigo-950 font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+                {selectedBranchFilter !== "ALL" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                    <span>Kota: {selectedBranchFilter}</span>
+                    <button
+                      onClick={() => setSelectedBranchFilter("ALL")}
+                      className="hover:text-emerald-950 font-bold cursor-pointer"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                )}
+                {selectedPeriodFilter !== "ALL" && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[10px] font-bold text-amber-700">
+                    <span>Periode: {selectedPeriodFilter}</span>
+                    <button
+                      onClick={() => setSelectedPeriodFilter("ALL")}
+                      className="hover:text-amber-950 font-bold cursor-pointer"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -1184,7 +1302,7 @@ export default function CostExceptionPage() {
                     <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
                       {isSlaFilterActive
                         ? "Tidak ada data exception yang melebihi batas waktu SLA 24 jam."
-                        : "Tidak ada data exception yang cocok dengan kriteria filter."}
+                        : "Tidak ada data exception yang cocok dengan filter PT, Kota, atau kriteria yang dipilih."}
                     </td>
                   </tr>
                 ) : (
@@ -1205,7 +1323,7 @@ export default function CostExceptionPage() {
                       <td className="py-3.5 px-3">
                         <p className="font-bold text-slate-900">{row.customer}</p>
                         <p className="font-mono text-[11px] text-slate-400">
-                          {row.jobNumber}
+                          {row.jobNumber} · {row.branch}
                         </p>
                       </td>
                       <td className="py-3.5 px-3 font-medium text-slate-900">

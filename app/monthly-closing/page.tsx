@@ -74,14 +74,13 @@ function formatCompactRupiah(val: number): string {
 }
 
 // =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX BUG-FN-002)
+// SUB-KOMPONEN: NOTIFICATION POPOVER INTERAKTIF (FIX QA 2: Hilang saat diklik)
 // =========================================================================
 interface NotificationPopoverProps {
   isOpen: boolean;
   onClose: () => void;
   periode: string;
   isLoading: boolean;
-  totalExceptions: number;
   categories: {
     title: string;
     count: number;
@@ -93,6 +92,7 @@ interface NotificationPopoverProps {
     bgClass: string;
     badgeClass: string;
   }[];
+  dismissedTags: string[];
   isMarkedAllRead: boolean;
   onToggleMarkAllRead: () => void;
   onSelectCategory: (title: string) => void;
@@ -103,8 +103,8 @@ function NotificationPopover({
   onClose,
   periode,
   isLoading,
-  totalExceptions,
   categories,
+  dismissedTags,
   isMarkedAllRead,
   onToggleMarkAllRead,
   onSelectCategory,
@@ -112,6 +112,12 @@ function NotificationPopover({
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
 
   if (!isOpen) return null;
+
+  const visibleCategories = isMarkedAllRead
+    ? []
+    : categories.filter((c) => !dismissedTags.includes(c.title));
+
+  const remainingTotal = visibleCategories.reduce((acc, c) => acc + c.count, 0);
 
   return (
     <>
@@ -121,7 +127,7 @@ function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {!isMarkedAllRead && totalExceptions > 0 && (
+              {remainingTotal > 0 && (
                 <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
               )}
             </div>
@@ -141,7 +147,7 @@ function NotificationPopover({
           ) : (
             <>
               <p className="mt-2 text-xs font-bold text-slate-800">
-                {isMarkedAllRead ? 0 : totalExceptions} exception perlu tindak lanjut
+                {remainingTotal} exception perlu tindak lanjut
               </p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 Ringkasan exception · {periode}
@@ -153,7 +159,7 @@ function NotificationPopover({
             onClick={onToggleMarkAllRead}
             className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            {isMarkedAllRead ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
+            {visibleCategories.length === 0 ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
@@ -197,24 +203,18 @@ function NotificationPopover({
                 </div>
               ))}
             </div>
-          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+          ) : visibleCategories.length === 0 ? (
             <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditandai dibaca.
-            </div>
-          ) : categories.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Tidak ada notifikasi aktif saat ini.
+              Semua notifikasi telah ditinjau / ditandai dibaca.
             </div>
           ) : (
-            categories.map((cat, i) => {
+            visibleCategories.map((cat, i) => {
               const IconComp = cat.icon;
               return (
                 <div
                   key={`notif-closing-${cat.title}-${i}`}
                   onClick={() => onSelectCategory(cat.title)}
-                  className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
-                    isMarkedAllRead ? "opacity-60" : ""
-                  }`}
+                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer"
                 >
                   <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.bgClass} ${cat.colorClass}`}>
                     <IconComp className="h-4 w-4" />
@@ -267,13 +267,14 @@ export default function MonthlyClosingPage() {
   const liveTime4 = useMemo(() => formatLiveTimestamp(new Date(), 5), []);
 
   // State Transaksi & Status
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<Record<string, unknown>[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string>("ALL");
   const [dynamicPeriodOptions, setDynamicPeriodOptions] = useState<DropdownOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
   const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
+  const [dismissedNotifTags, setDismissedNotifTags] = useState<string[]>([]);
   const [filterKategori, setFilterKategori] = useState("Semua Aktivitas");
 
   // State Penguncian Periode Manual & Konfirmasi Modal
@@ -286,20 +287,35 @@ export default function MonthlyClosingPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
+      try {
+        const saved = JSON.parse(localStorage.getItem("c2_dismissed_notif_tags") || "[]");
+        if (Array.isArray(saved)) setDismissedNotifTags(saved);
+      } catch {
+        setDismissedNotifTags([]);
+      }
     }
   }, []);
 
   const handleToggleMarkAllRead = () => {
-    setIsNotifMarkedRead((prev) => {
-      const next = !prev;
+    if (isNotifMarkedRead || dismissedNotifTags.length >= 3) {
+      setIsNotifMarkedRead(false);
+      setDismissedNotifTags([]);
       if (typeof window !== "undefined") {
-        localStorage.setItem("c2_notif_read", String(next));
+        localStorage.setItem("c2_notif_read", "false");
+        localStorage.removeItem("c2_dismissed_notif_tags");
       }
-      return next;
-    });
+    } else {
+      const all = ["Over Budget", "High Cost", "Missing Evidence"];
+      setIsNotifMarkedRead(true);
+      setDismissedNotifTags(all);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", "true");
+        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(all));
+      }
+    }
   };
 
-  // Tarik Data Nyata dari Supabase View c2_cost_transactions & Sinkronisasi Status Exception (Fix BUG-FN-005)
+  // Tarik Data Nyata dari Supabase View c2_cost_transactions & Sinkronisasi Status Exception
   const fetchClosingData = useCallback(async () => {
     try {
       setIsSyncing(true);
@@ -313,10 +329,9 @@ export default function MonthlyClosingPage() {
         return;
       }
 
-      // Ambil status exception yang telah diselesaikan dari localStorage maupun DB
       const resolvedMap: Record<string, { status: string; notes: string }> =
         typeof window !== "undefined"
-          ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+          ? JSON.parse(localStorage.getItem("c2_exception_status_sync") || localStorage.getItem("c2_resolved_exceptions") || "{}")
           : {};
 
       const enrichedTransactions = txRes.data.map((t) => {
@@ -337,8 +352,7 @@ export default function MonthlyClosingPage() {
 
       setTransactions(enrichedTransactions);
 
-      // Ekstrak Pilihan Periode dari Database (Sertakan Semua Periode agar selaras dengan Priority Exception)
-      const uniquePeriods = Array.from(new Set(enrichedTransactions.map((t) => t.period_month).filter(Boolean)));
+      const uniquePeriods = Array.from(new Set(enrichedTransactions.map((t) => String(t.period_month || "")).filter(Boolean)));
       const opts: DropdownOption[] = [{ value: "ALL", label: `Semua Periode (${getDynamicPeriod(0)})` }];
       if (uniquePeriods.length > 0) {
         uniquePeriods.forEach((p) => opts.push({ value: p, label: p }));
@@ -350,7 +364,6 @@ export default function MonthlyClosingPage() {
       }
       setDynamicPeriodOptions(opts);
 
-      // Periksa Apakah Periode Sudah Terkunci di Database atau LocalStorage
       const activePeriodKey = selectedPeriod === "ALL" ? (uniquePeriods[0] || getDynamicPeriod(0)) : selectedPeriod;
       const isLockedInDb = batchRes.data?.some(
         (b) => b.period_month === activePeriodKey && (b.status === "LOCKED" || b.status === "CLOSED")
@@ -374,7 +387,6 @@ export default function MonthlyClosingPage() {
     fetchClosingData();
   }, [fetchClosingData]);
 
-  // Dengarkan event fokus/storage agar saat user berpindah tab atau kembali dari Priority Exception langsung real-time ter-update
   useEffect(() => {
     const handleFocusOrStorage = () => {
       fetchClosingData();
@@ -387,7 +399,6 @@ export default function MonthlyClosingPage() {
     };
   }, [fetchClosingData]);
 
-  // Transaksi Terfilter Sesuai Periode Terpilih
   const filteredPeriodTransactions = useMemo(() => {
     if (!selectedPeriod || selectedPeriod === "ALL") return transactions;
     return transactions.filter((t) => t.period_month === selectedPeriod);
@@ -398,17 +409,15 @@ export default function MonthlyClosingPage() {
     return selectedPeriod;
   }, [selectedPeriod]);
 
-  // Kalkulasi Metrik Dinamis Berdasarkan Data Database (Fix BUG-FN-005: Jumlah Exception Aktif berkurang real-time)
   const metrics = useMemo(() => {
     const resolvedMap: Record<string, { status: string }> =
       typeof window !== "undefined"
-        ? JSON.parse(localStorage.getItem("c2_resolved_exceptions") || "{}")
+        ? JSON.parse(localStorage.getItem("c2_exception_status_sync") || localStorage.getItem("c2_resolved_exceptions") || "{}")
         : {};
 
     const totalCount = filteredPeriodTransactions.length;
     const sumActual = filteredPeriodTransactions.reduce((acc, curr) => acc + Number(curr.actual_cost || 0), 0);
 
-    // Seluruh transaksi yang memiliki riwayat anomali
     const allAnomalies = filteredPeriodTransactions.filter(
       (t) =>
         t.review_flag ||
@@ -416,11 +425,11 @@ export default function MonthlyClosingPage() {
         !t.has_evidence ||
         !t.is_job_matched ||
         t.status === "Selesai" ||
-        Boolean(resolvedMap[t.id])
+        Boolean(resolvedMap[String(t.id)])
     );
 
     const resolvedCount = allAnomalies.filter(
-      (t) => t.status === "Selesai" || resolvedMap[t.id]?.status === "Selesai"
+      (t) => t.status === "Selesai" || resolvedMap[String(t.id)]?.status === "Selesai"
     ).length;
 
     const pendingCount = Math.max(0, allAnomalies.length - resolvedCount);
@@ -432,7 +441,6 @@ export default function MonthlyClosingPage() {
       totalRecords: totalCount,
       totalCost: sumActual,
       totalAnomaliesCount: allAnomalies.length,
-      // Nilai utama kartu EXCEPTION menampilkan jumlah exception aktif yang masih terbuka (berkurang dari 18 -> 17 saat diselesaikan)
       exceptionsCount: pendingCount,
       resolvedCount,
       pendingCount,
@@ -442,7 +450,6 @@ export default function MonthlyClosingPage() {
     };
   }, [filteredPeriodTransactions, isPeriodLockedManual]);
 
-  // Evaluasi 6 Checklist Otomatis
   const checklistEvaluated = useMemo(() => {
     const hasData = filteredPeriodTransactions.length > 0;
     const noPendingExceptions = hasData && metrics.pendingCount === 0;
@@ -474,10 +481,7 @@ export default function MonthlyClosingPage() {
     return { items, completed, percentage };
   }, [filteredPeriodTransactions, metrics]);
 
-  // Eksekusi Kunci / Pengesahan Periode ke Supabase
-// Eksekusi Kunci / Pengesahan Periode ke Supabase & Audit Trail (FR-004 & TR-004)
   const handleLockPeriod = async () => {
-    // Validasi FR-CCR2-004-02: Wajib isi Managerial Override Notes jika masih ada exception aktif
     if (metrics.pendingCount > 0 && !approvalNotes.trim()) {
       alert("Masih terdapat exception aktif. Mohon isi Catatan Justifikasi (Managerial Override Notes) terlebih dahulu!");
       return;
@@ -486,7 +490,6 @@ export default function MonthlyClosingPage() {
     try {
       setIsActionLoading(true);
 
-      // 1. Panggil API resmi sesuai TR-2909-004 (menyimpan ke c2_cost_period_locks & c2_cost_closing_audit_logs)
       await fetch("/api/v1/cost-closing/approve-lock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -497,13 +500,11 @@ export default function MonthlyClosingPage() {
         }),
       });
 
-      // 2. Perbarui status batch di c2_cost_ingestion_batches
       await supabase
         .from("c2_cost_ingestion_batches")
         .update({ status: "CLOSED" })
         .eq("period_month", displayPeriodLabel);
 
-      // 3. Simpan status di localStorage sebagai persistensi instan
       if (typeof window !== "undefined") {
         localStorage.setItem(`c2_locked_${selectedPeriod}`, "true");
         localStorage.setItem(`c2_locked_${displayPeriodLabel}`, "true");
@@ -522,7 +523,6 @@ export default function MonthlyClosingPage() {
     }
   };
 
-  // Batalkan Penguncian Periode (Unlock)
   const handleUnlockPeriod = async () => {
     try {
       setIsActionLoading(true);
@@ -549,7 +549,6 @@ export default function MonthlyClosingPage() {
     }
   };
 
-  // Aktivitas Dinamis Sesuai Tahapan Audit Trail
   const dynamicActivities: ActivityRow[] = useMemo(() => [
     {
       tahap: 1,
@@ -589,13 +588,11 @@ export default function MonthlyClosingPage() {
     },
   ], [filteredPeriodTransactions.length, metrics, liveTime1, liveTime2, liveTime3, liveTime4]);
 
-  // Filter Aktivitas
   const filteredActivities = useMemo(() => {
     if (filterKategori === "Semua Aktivitas") return dynamicActivities;
     return dynamicActivities.filter((a) => a.kategori === filterKategori);
   }, [filterKategori, dynamicActivities]);
 
-  // Ringkasan Notifikasi Dinamis (hanya transaksi yang belum Selesai)
   const notificationCategories = useMemo(() => {
     const activeTx = filteredPeriodTransactions.filter((t) => t.status !== "Selesai");
     const list = [];
@@ -647,7 +644,11 @@ export default function MonthlyClosingPage() {
     return list;
   }, [filteredPeriodTransactions]);
 
-  // Unduh Berita Acara Resmi
+  const hasUnreadNotif = useMemo(() => {
+    if (isNotifMarkedRead) return false;
+    return notificationCategories.some((c) => !dismissedNotifTags.includes(c.title));
+  }, [notificationCategories, isNotifMarkedRead, dismissedNotifTags]);
+
   const handleDownloadBeritaAcara = () => {
     const textContent = `================================================================================
 BERITA ACARA PENUTUPAN BUKU BIAYA OPERASIONAL (MONTHLY COST CLOSING)
@@ -660,10 +661,14 @@ Otorisator     : Budi Santoso, Head of Finance
 Waktu Eksekusi : ${liveTime3} WIB
 
 1. RINGKASAN REKONSILIASI KEUANGAN:
-- Total Baris Transaksi  : ${metrics.totalRecords.toLocaleString("id-ID")} Transaksi Tervalidasi
-- Total Realisasi Biaya  : ${formatCompactRupiah(metrics.totalCost)}
-- Transaksi Exception    : ${metrics.pendingCount} Aktif (${metrics.resolvedCount} Selesai dari ${metrics.totalAnomaliesCount} Total)
-- Status Pengesahan      : ${metrics.approvalStatus}
+- Total Baris Transaksi  : 
+${metrics.totalRecords.toLocaleString("id-ID")} Transaksi Tervalidasi
+- Total Realisasi Biaya  : 
+${formatCompactRupiah(metrics.totalCost)}
+- Transaksi Exception    : 
+${metrics.pendingCount} Aktif (${metrics.resolvedCount} Selesai dari ${metrics.totalAnomaliesCount} Total)
+- Status Pengesahan      : 
+${metrics.approvalStatus}
 
 2. LEMBAR KONTROL AUDIT (CHECKLIST CLOSING):
 ${checklistEvaluated.items.map((i) => `[${i.done ? "✓" : " "}] ${i.label}`).join("\n")}
@@ -732,7 +737,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                 }`}
               >
                 <Bell className="h-4 w-4" />
-                {metrics.pendingCount > 0 && !isNotifMarkedRead && (
+                {hasUnreadNotif && (
                   <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
                 )}
               </button>
@@ -742,17 +747,20 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                 onClose={() => setIsNotificationOpen(false)}
                 periode={displayPeriodLabel}
                 isLoading={isLoading}
-                totalExceptions={metrics.pendingCount}
                 categories={notificationCategories}
+                dismissedTags={dismissedNotifTags}
                 isMarkedAllRead={isNotifMarkedRead}
                 onToggleMarkAllRead={handleToggleMarkAllRead}
                 onSelectCategory={(title) => {
                   setIsNotificationOpen(false);
                   if (title) {
+                    const nextDismissed = Array.from(new Set([...dismissedNotifTags, title]));
+                    setDismissedNotifTags(nextDismissed);
                     if (typeof window !== "undefined") {
+                      localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(nextDismissed));
                       sessionStorage.setItem("c2_filter_tag", title);
                     }
-                    router.push(`/cost-exception?tag=${encodeURIComponent(title)}`);
+                    router.push("/cost-exception");
                   } else {
                     router.push("/priority-exception");
                   }
@@ -933,7 +941,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
                 </p>
               </div>
 
-              {/* Card 3: EXCEPTION (FIX BUG-FN-005: Menampilkan jumlah exception aktif secara real-time) */}
+              {/* Card 3: EXCEPTION */}
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between">
                   <span className="text-[11px] font-bold tracking-wider text-slate-400">
@@ -979,7 +987,7 @@ ${approvalNotes || "Seluruh data biaya telah direkonsiliasi dan dinyatakan valid
           )}
         </div>
 
-        {/* Baris 2: Approval Timeline & Checklist Closing */}
+        {/* Baris 2: Approval Timeline & Checklist Closing (Tanpa Tombol Unduh Excel di bawah Timeline) */}
         <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
           {/* Approval Timeline */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm xl:col-span-7">

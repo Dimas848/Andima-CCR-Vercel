@@ -8,6 +8,7 @@ import {
   AlertCircle,
   FileText,
   ArrowRight,
+  ShieldAlert,
 } from "lucide-react";
 import { CostTransaction } from "./page";
 import { supabase } from "@/lib/supabase";
@@ -30,6 +31,7 @@ export default function NotificationPopover({
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
   const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
+  const [dismissedTags, setDismissedTags] = useState<string[]>([]);
 
   const [dbTransactions, setDbTransactions] = useState<CostTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -37,25 +39,50 @@ export default function NotificationPopover({
   useEffect(() => {
     if (typeof window !== "undefined") {
       setIsMarkedAllRead(localStorage.getItem("c2_notif_read") === "true");
+      try {
+        const saved = JSON.parse(localStorage.getItem("c2_dismissed_notif_tags") || "[]");
+        setDismissedTags(Array.isArray(saved) ? saved : []);
+      } catch {
+        setDismissedTags([]);
+      }
     }
   }, [isOpen]);
 
   const handleToggleRead = () => {
-    setIsMarkedAllRead((prev) => {
-      const next = !prev;
+    if (isMarkedAllRead || dismissedTags.length > 0) {
+      setIsMarkedAllRead(false);
+      setDismissedTags([]);
       if (typeof window !== "undefined") {
-        localStorage.setItem("c2_notif_read", String(next));
+        localStorage.setItem("c2_notif_read", "false");
+        localStorage.removeItem("c2_dismissed_notif_tags");
+        window.dispatchEvent(new Event("storage"));
       }
-      return next;
-    });
+    } else {
+      const all = ["Over Budget", "High Cost", "Missing Evidence", "Duplicate Data"];
+      setIsMarkedAllRead(true);
+      setDismissedTags(all);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("c2_notif_read", "true");
+        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(all));
+        window.dispatchEvent(new Event("storage"));
+      }
+    }
   };
 
+  // PERBAIKAN QA 2: Saat notifikasi diklik dan diarahkan ke halaman, item notifikasi tersebut langsung hilang
   const handleCardClick = (tag: string) => {
-    onClose();
+    const nextDismissed = Array.from(new Set([...dismissedTags, tag]));
+    setDismissedTags(nextDismissed);
     if (typeof window !== "undefined") {
+      localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(nextDismissed));
       sessionStorage.setItem("c2_filter_tag", tag);
+      sessionStorage.removeItem("c2_filter_customer");
+      sessionStorage.removeItem("c2_filter_branch");
+      sessionStorage.removeItem("c2_filter_period");
+      window.dispatchEvent(new Event("storage"));
     }
-    router.push(`/cost-exception?tag=${encodeURIComponent(tag)}`);
+    onClose();
+    router.push("/cost-exception");
   };
 
   useEffect(() => {
@@ -71,7 +98,7 @@ export default function NotificationPopover({
             .order("created_at", { ascending: false });
 
           if (!error && data) {
-            setDbTransactions(data as any);
+            setDbTransactions(data as CostTransaction[]);
           }
         } catch (err) {
           console.error("Gagal mengambil data notifikasi:", err);
@@ -83,47 +110,10 @@ export default function NotificationPopover({
     }
   }, [transactions, isOpen]);
 
-  const notifData = useMemo(() => {
+  const categories = useMemo(() => {
     const activeList = (dbTransactions.length > 0 ? dbTransactions : transactions).filter(
-      (t: any) => t.status !== "Selesai"
+      (t) => t.status !== "Selesai"
     );
-
-    if (!activeList || activeList.length === 0) {
-      return {
-        totalExceptions: 0,
-        overBudgetCount: 0,
-        overBudgetValue: "Rp 0",
-        highCostCount: 0,
-        highCostValue: "Rp 0",
-        missingEvidenceCount: 0,
-        missingEvidenceValue: "Rp 0",
-      };
-    }
-
-    let overBudget = 0;
-    let overBudgetSum = 0;
-    let highCost = 0;
-    let highCostSum = 0;
-    let missingEvidence = 0;
-    let missingEvidenceSum = 0;
-
-    activeList.forEach((t: any) => {
-      const actual = Number(t.actual_cost || 0);
-      const variance = Number(t.variance || 0);
-
-      if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
-        overBudget++;
-        overBudgetSum += actual;
-      }
-      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
-        highCost++;
-        highCostSum += actual;
-      }
-      if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
-        missingEvidence++;
-        missingEvidenceSum += actual;
-      }
-    });
 
     const formatJt = (val: number) => {
       if (val === 0) return "Rp 0";
@@ -139,25 +129,101 @@ export default function NotificationPopover({
       })} jt`;
     };
 
-    const totalExceptions = activeList.filter(
-      (t: any) =>
-        t.review_flag ||
-        Number(t.variance || 0) > 0 ||
-        !t.has_evidence ||
-        t.job_number === "UNMATCHED" ||
-        Number(t.actual_cost || 0) >= 50_000_000
-    ).length;
+    let overBudget = 0;
+    let overBudgetSum = 0;
+    let highCost = 0;
+    let highCostSum = 0;
+    let missingEvidence = 0;
+    let missingEvidenceSum = 0;
+    let unmatched = 0;
+    let unmatchedSum = 0;
 
-    return {
-      totalExceptions,
-      overBudgetCount: overBudget,
-      overBudgetValue: formatJt(overBudgetSum),
-      highCostCount: highCost,
-      highCostValue: formatJt(highCostSum),
-      missingEvidenceCount: missingEvidence,
-      missingEvidenceValue: formatJt(missingEvidenceSum),
-    };
-  }, [dbTransactions, transactions]);
+    activeList.forEach((t) => {
+      const actual = Number(t.actual_cost || 0);
+      const variance = Number(t.variance || 0);
+
+      if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
+        overBudget++;
+        overBudgetSum += actual;
+      }
+      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
+        highCost++;
+        highCostSum += actual;
+      }
+      if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
+        missingEvidence++;
+        missingEvidenceSum += actual;
+      }
+      if (!t.is_job_matched || t.job_number === "UNMATCHED") {
+        unmatched++;
+        unmatchedSum += actual;
+      }
+    });
+
+    const items = [];
+    if (overBudget > 0 && !dismissedTags.includes("Over Budget")) {
+      items.push({
+        tag: "Over Budget",
+        title: "Over Budget",
+        count: overBudget,
+        value: formatJt(overBudgetSum),
+        desc: "Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.",
+        action: "Prioritas review anggaran →",
+        icon: TrendingUp,
+        iconBg: "bg-rose-50 text-[#e11d48]",
+        badgeClass: "bg-rose-50 text-rose-600",
+        actionColor: "text-[#e11d48]",
+      });
+    }
+    if (highCost > 0 && !dismissedTags.includes("High Cost")) {
+      items.push({
+        tag: "High Cost",
+        title: "High Cost",
+        count: highCost,
+        value: formatJt(highCostSum),
+        desc: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
+        action: "Perlu peninjauan biaya →",
+        icon: AlertCircle,
+        iconBg: "bg-rose-50 text-[#e11d48]",
+        badgeClass: "bg-rose-50 text-rose-600",
+        actionColor: "text-[#e11d48]",
+      });
+    }
+    if (missingEvidence > 0 && !dismissedTags.includes("Missing Evidence")) {
+      items.push({
+        tag: "Missing Evidence",
+        title: "Missing Evidence",
+        count: missingEvidence,
+        value: formatJt(missingEvidenceSum),
+        desc: "Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.",
+        action: "Perlu kelengkapan dokumen →",
+        icon: FileText,
+        iconBg: "bg-amber-50 text-amber-600",
+        badgeClass: "bg-amber-50 text-amber-700",
+        actionColor: "text-amber-600",
+      });
+    }
+    if (unmatched > 0 && !dismissedTags.includes("Duplicate Data")) {
+      items.push({
+        tag: "Duplicate Data",
+        title: "Unmatched CRM",
+        count: unmatched,
+        value: formatJt(unmatchedSum),
+        desc: "Nomor pekerjaan tidak ditemukan di master database CRM.",
+        action: "Verifikasi Job Number →",
+        icon: ShieldAlert,
+        iconBg: "bg-purple-50 text-purple-600",
+        badgeClass: "bg-purple-50 text-purple-700",
+        actionColor: "text-purple-600",
+      });
+    }
+
+    return isMarkedAllRead ? [] : items;
+  }, [dbTransactions, transactions, dismissedTags, isMarkedAllRead]);
+
+  const remainingTotal = useMemo(() => {
+    return categories.reduce((acc, c) => acc + c.count, 0);
+  }, [categories]);
 
   if (!isOpen) return null;
 
@@ -170,7 +236,7 @@ export default function NotificationPopover({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {!isMarkedAllRead && notifData.totalExceptions > 0 && (
+              {remainingTotal > 0 && (
                 <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
               )}
             </div>
@@ -184,7 +250,7 @@ export default function NotificationPopover({
           </div>
 
           <p className="mt-2 text-xs font-bold text-slate-800">
-            {isMarkedAllRead ? 0 : notifData.totalExceptions} exception perlu tindak lanjut
+            {remainingTotal} exception perlu tindak lanjut
           </p>
           <p className="mt-0.5 text-[11px] text-slate-400">
             Ringkasan exception · {periode}
@@ -194,7 +260,7 @@ export default function NotificationPopover({
             onClick={handleToggleRead}
             className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
           >
-            {isMarkedAllRead ? "Tandai belum dibaca" : "Tandai semua dibaca"}
+            {categories.length === 0 ? "Tampilkan kembali notifikasi" : "Tandai semua dibaca"}
           </button>
 
           <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
@@ -238,100 +304,38 @@ export default function NotificationPopover({
                 </div>
               ))}
             </div>
-          ) : activeTab === "belum_dibaca" && isMarkedAllRead ? (
+          ) : categories.length === 0 ? (
             <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditandai dibaca.
-            </div>
-          ) : notifData.totalExceptions === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Tidak ada anomali atau exception yang tercatat di database.
+              Semua notifikasi telah ditinjau / ditandai dibaca.
             </div>
           ) : (
-            <>
-              <div
-                onClick={() => handleCardClick("Over Budget")}
-                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
-                  isMarkedAllRead ? "opacity-60" : ""
-                }`}
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
-                  <TrendingUp className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">Over Budget</h3>
-                    <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-                      {notifData.overBudgetCount} item
+            categories.map((cat) => {
+              const IconComp = cat.icon;
+              return (
+                <div
+                  key={cat.tag}
+                  onClick={() => handleCardClick(cat.tag)}
+                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer"
+                >
+                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${cat.iconBg}`}>
+                    <IconComp className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-slate-900">{cat.title}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cat.badgeClass}`}>
+                        {cat.count} item
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-bold text-slate-900">{cat.value}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{cat.desc}</p>
+                    <span className={`mt-2 block text-[11px] font-bold ${cat.actionColor}`}>
+                      {cat.action}
                     </span>
                   </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifData.overBudgetValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.
-                  </p>
-                  <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Prioritas review anggaran →
-                  </span>
                 </div>
-              </div>
-
-              <div
-                onClick={() => handleCardClick("High Cost")}
-                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
-                  isMarkedAllRead ? "opacity-60" : ""
-                }`}
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
-                  <AlertCircle className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">High Cost</h3>
-                    <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-                      {notifData.highCostCount} item
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifData.highCostValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.
-                  </p>
-                  <span className="mt-2 block text-[11px] font-bold text-[#e11d48]">
-                    Perlu peninjauan biaya →
-                  </span>
-                </div>
-              </div>
-
-              <div
-                onClick={() => handleCardClick("Missing Evidence")}
-                className={`flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer ${
-                  isMarkedAllRead ? "opacity-60" : ""
-                }`}
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                  <FileText className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">Missing Evidence</h3>
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                      {notifData.missingEvidenceCount} item
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifData.missingEvidenceValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.
-                  </p>
-                  <span className="mt-2 block text-[11px] font-bold text-amber-600">
-                    Perlu kelengkapan dokumen →
-                  </span>
-                </div>
-              </div>
-            </>
+              );
+            })
           )}
         </div>
 

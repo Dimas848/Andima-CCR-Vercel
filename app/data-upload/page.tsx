@@ -58,8 +58,8 @@ function getDynamicPeriod(offsetMonths = 0): string {
 }
 
 const defaultJenisOptions: DropdownOption[] = [
-  { value: "Monthly Cost C2", label: "Monthly Cost C2" },
-  { value: "Monthly Sales C1", label: "Monthly Sales C1" },
+  { value: "Monthly Cost", label: "Monthly Cost" },
+  { value: "Monthly Sales", label: "Monthly Sales" },
 ];
 
 const defaultCabangOptions: DropdownOption[] = [

@@ -7,6 +7,9 @@ import type { CostTransaction } from "./page";
 
 interface ExceptionSummaryProps {
   transactions?: CostTransaction[];
+  activeCustomer?: string;
+  activeBranch?: string;
+  activePeriod?: string;
 }
 
 interface AnomalyCardData {
@@ -21,7 +24,12 @@ interface AnomalyCardData {
 
 const STORAGE_STATUS_KEY = "c2_exception_status_sync";
 
-export default function ExceptionSummary({ transactions = [] }: ExceptionSummaryProps) {
+export default function ExceptionSummary({
+  transactions = [],
+  activeCustomer = "ALL",
+  activeBranch = "ALL",
+  activePeriod = "ALL",
+}: ExceptionSummaryProps) {
   const router = useRouter();
   const [currentPage, setCurrentPage] = useState<number>(1);
 
@@ -436,9 +444,34 @@ export default function ExceptionSummary({ transactions = [] }: ExceptionSummary
   const totalItemCount = activeTransactions.length;
   const displayedCards = pagesData[currentPage] || pagesData[1];
 
+  // PERBAIKAN QA 1: Teruskan filter PT, Cabang/Kota, dan Periode yang aktif di Dashboard ke Cost Exception
   const handleCardClick = (targetFilterTag?: string) => {
-    if (targetFilterTag && typeof window !== "undefined") {
-      sessionStorage.setItem("c2_filter_tag", targetFilterTag);
+    if (typeof window !== "undefined") {
+      if (targetFilterTag) {
+        sessionStorage.setItem("c2_filter_tag", targetFilterTag);
+      }
+
+      const cust = activeCustomer !== "ALL" ? activeCustomer : sessionStorage.getItem("c2_dash_customer") || "ALL";
+      const br = activeBranch !== "ALL" ? activeBranch : sessionStorage.getItem("c2_dash_branch") || "ALL";
+      const pr = activePeriod !== "ALL" ? activePeriod : sessionStorage.getItem("c2_dash_period") || "ALL";
+
+      if (cust && cust !== "ALL") {
+        sessionStorage.setItem("c2_filter_customer", cust);
+      } else {
+        sessionStorage.removeItem("c2_filter_customer");
+      }
+
+      if (br && br !== "ALL") {
+        sessionStorage.setItem("c2_filter_branch", br);
+      } else {
+        sessionStorage.removeItem("c2_filter_branch");
+      }
+
+      if (pr && pr !== "ALL") {
+        sessionStorage.setItem("c2_filter_period", pr);
+      } else {
+        sessionStorage.removeItem("c2_filter_period");
+      }
     }
     router.push("/cost-exception");
   };
