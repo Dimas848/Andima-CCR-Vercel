@@ -10,6 +10,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".c2-local-backup/**",
+    "test-results/**",
   ]),
   {
     rules: {

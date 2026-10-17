@@ -1,1204 +1,413 @@
 "use client";
 
-import { useState, useRef, useMemo, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import ExcelJS from "exceljs";
+import { useRef, useState, useMemo } from "react";
+import Link from "next/link";
+import { UploadCloud } from "lucide-react";
 import {
-  UploadCloud,
-  FileSpreadsheet,
-  CheckCircle2,
-  XCircle,
-  FileText,
-  Download,
-  Bell,
-  CalendarDays,
-  Info,
-  ListChecks,
-  SlidersHorizontal,
-  RefreshCw,
-  Loader2,
-  Play,
-  X,
-  TrendingUp,
-  AlertCircle,
-  ArrowRight,
-  Check,
-} from "lucide-react";
+  Workspace,
+  Filters,
+  Card,
+  Kpis,
+  LoadState,
+  Notice,
+  SalesTable,
+  HistoryTable,
+  Modal,
+  Status,
+  buttonClass,
+  secondaryClass,
+  fieldClass,
+} from "@/components/c2-workspace";
+import {
+  api,
+  amount,
+  money,
+  number,
+  query,
+  useApi,
+  usePeriod,
+  type Evidence,
+  type SalesRecord,
+  type ValidationData,
+  type UserInfo,
+} from "@/lib/c2-client";
 
-import Sidebar from "@/components/sidebar";
-import CustomDropdown, { DropdownOption } from "../dashboard/CustomDropdown";
-import { supabase } from "@/lib/supabase";
-
-// Interface Record Transaksi Memenuhi 7 Atribut Baku FR-CCR2-001-02
-export interface TransactionRecord {
-  id: string;
-  recordId: string;
-  voucherNo: string;         // Atribut 1: Nomor / Tautan Bukti Transaksi
-  periodMonth: string;       // Atribut 2: Periode Bulan
-  branchCode: string;        // Atribut 3: Cabang Operasional
-  customerName: string;      // Atribut 4: Nama Customer
-  jobNumber: string;         // Atribut 5: Nomor Pekerjaan (Job Number)
-  category: string;          // Atribut 6: Kategori Biaya
-  amount: number;            // Atribut 7: Nominal Biaya
-  hasEvidence: boolean;      // Kelengkapan Bukti Fisik
-  evidenceUrl?: string | null;
-  status: "Valid" | "Invalid";
-  reasons: string[];
-}
-
-const MONTH_NAMES_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+const MONTHS_ID = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
 ];
 
-function getDynamicPeriod(offsetMonths = 0): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - offsetMonths);
-  return `${MONTH_NAMES_ID[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-const defaultJenisOptions: DropdownOption[] = [
-  { value: "Monthly Cost", label: "Monthly Cost" },
-  { value: "Monthly Sales", label: "Monthly Sales" },
-];
-
-const defaultCabangOptions: DropdownOption[] = [
-  { value: "Semua Cabang", label: "Semua Cabang" },
-  { value: "Jakarta Pusat", label: "Jakarta Pusat" },
-  { value: "Surabaya", label: "Surabaya" },
-  { value: "Semarang", label: "Semarang" },
-];
-
-const formatRupiah = (val: number) => `Rp ${val.toLocaleString("id-ID")}`;
-
-const formatCompactRupiah = (val: number) => {
-  if (val === 0) return "Rp 0";
-  if (Math.abs(val) >= 1_000_000_000) {
-    return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} M`;
+// Helper mengubah "2026-11" -> "November 2026"
+function formatToIndonesianPeriod(val: string): string {
+  if (!val) return "";
+  const iso = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(val.trim());
+  if (iso) {
+    const monthIdx = Number(iso[2]) - 1;
+    return `${MONTHS_ID[monthIdx]} ${iso[1]}`;
   }
-  if (Math.abs(val) >= 1_000_000) {
-    return `Rp ${(val / 1_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} jt`;
+  return val;
+}
+
+// Helper mengubah "November 2026" -> "2026-11" untuk input kalender
+function toMonthInputValue(periodStr: string): string {
+  if (!periodStr) return "";
+  const parts = periodStr.trim().split(" ");
+  if (parts.length === 2) {
+    const idx = MONTHS_ID.findIndex(
+      (m) => m.toLowerCase() === parts[0].toLowerCase()
+    );
+    if (idx >= 0) {
+      const monthNum = String(idx + 1).padStart(2, "0");
+      return `${parts[1]}-${monthNum}`;
+    }
   }
-  return `Rp ${val.toLocaleString("id-ID")}`;
-};
-
-// =========================================================================
-// SUB-KOMPONEN: SKELETON LOADERS (3 KARTU KPI)
-// =========================================================================
-function KpiSkeletonCard() {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
-      <div className="flex items-start justify-between">
-        <div className="h-3 w-20 rounded bg-slate-200" />
-        <div className="h-7 w-7 rounded-lg bg-slate-100" />
-      </div>
-      <div className="mt-3">
-        <div className="h-7 w-20 rounded bg-slate-200" />
-      </div>
-      <div className="mt-3 h-3 w-32 rounded bg-slate-100" />
-    </div>
-  );
+  if (/^\d{4}-\d{2}$/.test(periodStr)) return periodStr;
+  return "";
 }
 
-function TableSkeletonRow() {
-  return (
-    <tr className="animate-pulse">
-      <td className="py-3.5 px-2"><div className="h-4 w-24 rounded bg-slate-200" /></td>
-      <td className="py-3.5 px-2"><div className="h-4 w-36 rounded bg-slate-200" /></td>
-      <td className="py-3.5 px-2"><div className="h-4 w-20 rounded bg-slate-100" /></td>
-      <td className="py-3.5 px-2"><div className="h-4 w-28 rounded bg-slate-200" /></td>
-      <td className="py-3.5 px-2 text-center"><div className="mx-auto h-5 w-16 rounded-full bg-slate-200" /></td>
-    </tr>
-  );
+interface Draft {
+  draftId: string;
+  upload_id: string;
+  period: string;
+  records: SalesRecord[];
+  warnings: string[];
 }
 
-// =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER
-// =========================================================================
-interface NotificationPopoverProps {
-  isOpen: boolean;
-  onClose: () => void;
-  periode: string;
-  onViewAllExceptions?: () => void;
-  dbExceptions: any[];
-}
-
-function NotificationPopover({
-  isOpen,
-  onClose,
-  periode,
-  onViewAllExceptions,
-  dbExceptions,
-}: NotificationPopoverProps) {
-  const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-  const [isMarkedAllRead, setIsMarkedAllRead] = useState(false);
-
-  const notifSummary = useMemo(() => {
-    let overBudget = 0;
-    let overBudgetSum = 0;
-    let highCost = 0;
-    let highCostSum = 0;
-    let missingEvidence = 0;
-    let missingEvidenceSum = 0;
-
-    dbExceptions.forEach((t) => {
-      const actual = Number(t.actual_cost) || 0;
-      if (t.variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
-        overBudget++;
-        overBudgetSum += actual;
-      }
-      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
-        highCost++;
-        highCostSum += actual;
-      }
-      if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
-        missingEvidence++;
-        missingEvidenceSum += actual;
-      }
-    });
-
-    const total = dbExceptions.filter(
-      (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
-    ).length;
-
-    return {
-      total,
-      overBudgetCount: overBudget,
-      overBudgetValue: formatCompactRupiah(overBudgetSum),
-      highCostCount: highCost,
-      highCostValue: formatCompactRupiah(highCostSum),
-      missingEvidenceCount: missingEvidence,
-      missingEvidenceValue: formatCompactRupiah(missingEvidenceSum),
-    };
-  }, [dbExceptions]);
-
-  if (!isOpen) return null;
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/5" onClick={onClose} />
-      <div className="absolute right-0 top-11 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl animate-in fade-in slide-in-from-top-2 text-left">
-        <div className="p-5 pb-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
-            </div>
-            <button
-              onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <p className="mt-2 text-xs font-bold text-slate-800">
-            {notifSummary.total} exception perlu tindak lanjut
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            Ringkasan exception · {periode}
-          </p>
-
-          <button
-            onClick={() => setIsMarkedAllRead(true)}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
-          >
-            Tandai semua dibaca
-          </button>
-
-          <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
-            <button
-              onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition cursor-pointer ${
-                activeTab === "semua"
-                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Semua
-            </button>
-            <button
-              onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition cursor-pointer ${
-                activeTab === "belum_dibaca"
-                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Belum dibaca
-            </button>
-          </div>
-        </div>
-
-        <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100">
-          {activeTab === "belum_dibaca" && isMarkedAllRead ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditandai dibaca.
-            </div>
-          ) : notifSummary.total === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Tidak ada anomali atau exception yang tercatat di database.
-            </div>
-          ) : (
-            <>
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
-                  <TrendingUp className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">Over Budget</h3>
-                    <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-                      {notifSummary.overBudgetCount} item
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifSummary.overBudgetValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-[#e11d48]">
-                  <AlertCircle className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">High Cost</h3>
-                    <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-600">
-                      {notifSummary.highCostCount} item
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifSummary.highCostValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Biaya tunggal di atas threshold rule. Periksa kewajaran nominal transaksi.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-3.5 p-5 transition hover:bg-slate-50/60">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                  <FileText className="h-4 w-4" />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-900">Missing Evidence</h3>
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                      {notifSummary.missingEvidenceCount} item
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm font-bold text-slate-900">
-                    {notifSummary.missingEvidenceValue}
-                  </p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Dokumen bukti belum lengkap. Lengkapi berkas untuk verifikasi biaya.
-                  </p>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
-          <button
-            onClick={() => {
-              onClose();
-              if (onViewAllExceptions) onViewAllExceptions();
-            }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
-          >
-            <span>Lihat semua exception</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// =========================================================================
-// KOMPONEN UTAMA: DATA UPLOAD PAGE
-// =========================================================================
 export default function DataUploadPage() {
-  const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const filter = usePeriod();
+  const user = useApi<UserInfo>("/api/auth/me");
+  const history = useApi<Evidence[]>(
+    filter.period
+      ? query("/api/v1/cost-evidence/history", { period: filter.period })
+      : null
+  );
+  const status = useApi<ValidationData>(
+    filter.period
+      ? query("/api/v1/cost-validation/summary", { period: filter.period })
+      : null
+  );
 
-  const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
-
-  const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => [
-    { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
-    { value: getDynamicPeriod(1), label: getDynamicPeriod(1) },
-    { value: getDynamicPeriod(2), label: getDynamicPeriod(2) },
-    { value: getDynamicPeriod(3), label: getDynamicPeriod(3) },
-  ], []);
-
-  const [periode, setPeriode] = useState<string>(currentLivePeriod);
-  const [jenis, setJenis] = useState("Monthly Cost C2");
-  const [cabangOperasional, setCabangOperasional] = useState("Semua Cabang");
-  const [dynamicCabangOptions, setDynamicCabangOptions] = useState<DropdownOption[]>(defaultCabangOptions);
-
-  // State Loading & Sinkronisasi
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [dbExceptions, setDbExceptions] = useState<any[]>([]);
-
-  // State Berkas
+  const input = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [isValidating, setIsValidating] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [validationStage, setValidationStage] = useState("Menunggu masukan berkas...");
-  const [loadedFile, setLoadedFile] = useState<{
-    name: string;
-    size: string;
-    rawBytes: number;
-    rowCount: number;
-  } | null>(null);
+  const [confirm, setConfirm] = useState(false);
+  const [error, setError] = useState<string>();
+  const [notice, setNotice] = useState<string>();
 
-  // State Baris Data & Filter Tab (Semua | Invalid | Valid)
-  const [records, setRecords] = useState<TransactionRecord[]>([]);
-  const [filterTab, setFilterTab] = useState<"Semua" | "Invalid" | "Valid">("Semua");
-  const [isCommitting, setIsCommitting] = useState(false);
-  const [commitSuccessData, setCommitSuccessData] = useState<{
-    batchId: string;
-    count: number;
-  } | null>(null);
+  const locked = Boolean(status.data?.validation?.is_validated);
+  const disabled =
+    busy ||
+    locked ||
+    !filter.period ||
+    status.loading ||
+    Boolean(status.error) ||
+    !user.data;
 
-  // Tarik Data Live Supabase untuk Referensi & Notifikasi
-  const loadDatabaseData = useCallback(async () => {
-    try {
-      setIsSyncing(true);
-      setIsLoading(true);
+  const currentMonthValue = useMemo(
+    () => toMonthInputValue(filter.period),
+    [filter.period]
+  );
 
-      const [res] = await Promise.all([
-        supabase.from("c2_cost_transactions").select("*").order("created_at", { ascending: false }),
-        new Promise((resolve) => setTimeout(resolve, 600)),
-      ]);
+  function changePeriod(value: string) {
+    if (busy) return;
+    const formatted = formatToIndonesianPeriod(value);
+    filter.setPeriod(formatted);
+    setDraft(null);
+    setFileName("");
+    setError(undefined);
+    setNotice(undefined);
+  }
 
-      if (!res.error && res.data) {
-        setDbExceptions(res.data);
-        const uniqueBranches = Array.from(new Set(res.data.map((d: any) => d.branch_code).filter(Boolean)));
-        if (uniqueBranches.length > 0) {
-          const opts: DropdownOption[] = [{ value: "Semua Cabang", label: "Semua Cabang" }];
-          uniqueBranches.forEach((b: any) => opts.push({ value: b, label: b }));
-          setDynamicCabangOptions(opts);
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSyncing(false);
-      setIsLoading(false);
+  async function preview(file: File | undefined) {
+    if (!file || disabled) return;
+    setError(undefined);
+    setNotice(undefined);
+    setDraft(null);
+    setFileName(file.name);
+
+    if (!/\.(csv|xlsx)$/i.test(file.name)) {
+      setError("Pilih berkas Company Sales Report berformat .csv atau .xlsx.");
+      return;
     }
-  }, []);
+    if (file.size > 25 * 1024 * 1024) {
+      setError("Ukuran berkas maksimal 25 MB.");
+      return;
+    }
 
-  useEffect(() => {
-    loadDatabaseData();
-  }, [loadDatabaseData]);
+    const form = new FormData();
+    form.set("file", file);
+    form.set("period", formatToIndonesianPeriod(filter.period));
 
-  // Kalkulasi KPI Dinamis Hasil Parsing (Hanya Valid & Invalid)
-  const kpiCounts = useMemo(() => {
-    const total = records.length;
-    const valid = records.filter((r) => r.status === "Valid").length;
-    const invalid = records.filter((r) => r.status === "Invalid").length;
-    const processable = valid;
-
-    return { total, valid, invalid, processable };
-  }, [records]);
-
-  // Filter daftar baris tabel sesuai filter tab yang aktif
-  const displayedRecords = useMemo(() => {
-    if (filterTab === "Invalid") return records.filter((r) => r.status === "Invalid");
-    if (filterTab === "Valid") return records.filter((r) => r.status === "Valid");
-    return records;
-  }, [records, filterTab]);
-
-  // Unduh Template Sesuai Format 7 Atribut Baku FR-CCR2-001
-  const handleDownloadTemplate = () => {
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      [
-        "voucher_no,period_month,branch_code,customer_name,job_number,cost_category,amount,has_evidence",
-        `BR26-06050,${periode},Jakarta Pusat,PT Nusantara Retail,AENAT/2606/0212,TRUCKING,42850000,TRUE`,
-        `BR26-06051,${periode},Surabaya,PT Sinar Logistik,AENAT/2606/0215,STORAGE,31240000,TRUE`,
-        `BR26-06052,${periode},Jakarta Pusat,CV Maju Bersama,AENAT/2606/0217,HANDLING,18760000,FALSE`,
-        `BR26-06053,${periode},Semarang,PT Garuda Teknologi,UNMATCHED,OTHER_OPERATIONAL,24500000,FALSE`,
-        `BR26-06054,${periode},Jakarta Pusat,PT Nusantara Retail,DSVEXP/2605/2551,TRUCKING,12980000,TRUE`,
-      ].join("\n");
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Template_Ingestion_PT_Andima_${periode.replace(/\s+/g, "_")}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  // Engine Validasi File: Mendeteksi 7 Atribut Utama FR-CCR2-001 Secara Presisi
-  const processUploadedFile = async (file: File) => {
-    setCommitSuccessData(null);
-    setIsValidating(true);
-    setProgress(20);
-    setValidationStage("Membaca stream berkas...");
-
-    const mb = (file.size / (1024 * 1024)).toFixed(1).replace(".", ",");
-
+    setBusy(true);
     try {
-      const parsedList: TransactionRecord[] = [];
-
-      if (file.name.toLowerCase().endsWith(".csv")) {
-        const text = await file.text();
-        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-        setProgress(45);
-        setValidationStage("Memeriksa format & skema 7 atribut...");
-
-        const delimiter = lines[0].includes(";") ? ";" : ",";
-        const headerCols = lines[0].split(delimiter).map((h) => h.trim().toLowerCase().replace(/^["']|["']$/g, ""));
-
-        // Deteksi Kolom Presisi agar tidak salah mendeteksi cost_category sebagai nominal
-        const vIdx = headerCols.findIndex((h) => h === "voucher_no" || h.includes("voucher") || h === "id");
-        const pIdx = headerCols.findIndex((h) => h === "period_month" || h.includes("period") || h.includes("bulan"));
-        const bIdx = headerCols.findIndex((h) => h === "branch_code" || h.includes("branch") || h.includes("cabang") || h.includes("region"));
-        const cIdx = headerCols.findIndex((h) => h === "customer_name" || h.includes("customer") || h.includes("pelanggan") || h.includes("entitas"));
-        const jIdx = headerCols.findIndex((h) => h === "job_number" || h.includes("job"));
-        const catIdx = headerCols.findIndex((h) => h === "cost_category" || h.includes("category") || h.includes("kategori"));
-        const aIdx = headerCols.findIndex((h) => h === "actual_cost" || h === "amount" || h === "cost" || h.includes("actual") || h.includes("nominal") || (h.includes("cost") && !h.includes("category") && !h.includes("planned")));
-        const eIdx = headerCols.findIndex((h) => h === "has_evidence" || h.includes("evidence") || h.includes("bukti"));
-
-        for (let i = 1; i < lines.length; i++) {
-          const cols = lines[i].split(delimiter).map((c) => c.trim().replace(/^["']|["']$/g, ""));
-          if (cols.length < 3) continue;
-
-                  // 1. Ambil nilai apa adanya dari file (JANGAN beri nilai default palsu)
-          const voucherNo = cols[vIdx !== -1 ? vIdx : 0]?.trim() || "";
-          const periodMonth = cols[pIdx !== -1 ? pIdx : 1]?.trim() || periode;
-          const branchCode = cols[bIdx !== -1 ? bIdx : 2]?.trim() || "";
-          const customerName = cols[cIdx !== -1 ? cIdx : 3]?.trim() || "";
-          const jobNumber = cols[jIdx !== -1 ? jIdx : 4]?.trim() || "";
-          const category = cols[catIdx !== -1 ? catIdx : 5]?.trim() || "";
-          const rawAmount = parseFloat((cols[aIdx !== -1 ? aIdx : 6] || "0").replace(/[^0-9.-]+/g, ""));
-          const hasEvidence = cols[eIdx !== -1 ? eIdx : 7]?.toUpperCase() === "TRUE" || cols[eIdx !== -1 ? eIdx : 7] === "1";
-
-          let status: "Valid" | "Invalid" = "Valid";
-          const reasons: string[] = [];
-
-          // 2. VALIDASI KETAT: Jika kolom penting kosong atau format salah -> WAJIB INVALID
-          if (!customerName || customerName.length < 3) {
-            status = "Invalid";
-            reasons.push("Nama customer wajib diisi");
-          }
-
-          if (isNaN(rawAmount) || rawAmount <= 0) {
-            status = "Invalid";
-            reasons.push("Nominal biaya harus berupa angka positif (> 0)");
-          }
-
-          if (!category) {
-            status = "Invalid";
-            reasons.push("Kategori biaya wajib diisi");
-          }
-
-          // 3. Pengecekan Anomali Bisnis (Status tetap Valid agar bisa masuk ke antrean Exception)
-          if (!jobNumber || jobNumber === "UNMATCHED" || jobNumber === "-") {
-            reasons.push("JOB NOT FOUND (Anomali)");
-          }
-
-          if (!hasEvidence) {
-            reasons.push("MISSING EVIDENCE (Bukti kosong)");
-          }
-
-          if (rawAmount >= 50_000_000) {
-            reasons.push("HIGH COST (Nominal tunggal >= 50 jt)");
-          }
-
-          parsedList.push({
-            id: `row-${i}`,
-            recordId: `C2-ROW-${String(i).padStart(4, "0")}`,
-            voucherNo,
-            periodMonth,
-            branchCode,
-            customerName,
-            jobNumber,
-            category,
-            amount: isNaN(rawAmount) ? 0 : rawAmount,
-            hasEvidence,
-            status,
-            reasons: reasons.length ? reasons : ["Semua atribut valid"],
-          });
-        }
-      } else if (file.name.toLowerCase().endsWith(".xlsx") || file.name.toLowerCase().endsWith(".xls")) {
-        setProgress(40);
-        setValidationStage("Mengekstrak lembar kerja Excel...");
-        const buffer = await file.arrayBuffer();
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.load(buffer);
-        const worksheet = workbook.worksheets[0];
-
-        setProgress(70);
-        setValidationStage("Validasi struktur 7 atribut wajib...");
-
-        let rowIdx = 1;
-        worksheet.eachRow((row, rowNumber) => {
-          if (rowNumber === 1) return;
-          const values = row.values as any[];
-          if (!values || values.length < 4) return;
-
-          const voucher = String(values[1] || `VCH-${String(rowIdx).padStart(4, "0")}`);
-          const pMonth = String(values[2] || periode);
-          const bCode = String(values[3] || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional));
-          const cust = String(values[4] || "PT Nusantara Retail");
-          const job = String(values[5] || "AENAT/2606/0212");
-          const cat = String(values[6] || "TRUCKING");
-          const amt = Number(String(values[7] || "10000000").replace(/[^0-9.-]+/g, ""));
-          const hasEvidenceVal = String(values[8]).toUpperCase() === "TRUE" || values[8] === true;
-
-          let st: "Valid" | "Invalid" = "Valid";
-          const reasons: string[] = [];
-
-          if (isNaN(amt) || amt <= 0) {
-            st = "Invalid";
-            reasons.push("Nominal tidak valid");
-          }
-          if (!job || job === "UNMATCHED" || job === "-") {
-            reasons.push("JOB NOT FOUND");
-          }
-          if (!hasEvidenceVal) {
-            reasons.push("MISSING EVIDENCE");
-          }
-          if (amt >= 50_000_000) {
-            reasons.push("HIGH COST");
-          }
-
-          parsedList.push({
-            id: `row-${rowIdx}`,
-            recordId: `C2-ROW-${String(rowIdx).padStart(4, "0")}`,
-            voucherNo: voucher,
-            periodMonth: pMonth,
-            branchCode: bCode,
-            customerName: cust,
-            jobNumber: job,
-            category: cat,
-            amount: isNaN(amt) ? 0 : amt,
-            hasEvidence: hasEvidenceVal,
-            status: st,
-            reasons: reasons.length ? reasons : ["Semua atribut valid"],
-          });
-          rowIdx++;
-        });
-      }
-
-      await new Promise((r) => setTimeout(r, 400));
-      setProgress(100);
-      setValidationStage("Pemeriksaan selesai.");
-
-      setIsValidating(false);
-      setLoadedFile({
-        name: file.name,
-        size: `${mb} MB`,
-        rawBytes: file.size,
-        rowCount: parsedList.length,
+      const res = await api<Draft>("/api/v1/cost-ingestion/upload", {
+        method: "POST",
+        body: form,
       });
-      setRecords(parsedList);
+      setDraft(res);
     } catch (err) {
-      console.error(err);
-      setIsValidating(false);
-      setProgress(0);
-      setValidationStage("Gagal memproses berkas.");
-    }
-  };
-
-  // Simpan Data: Masuk ke c2_cost_actual_transactions, c2_cost_ingestion_batches, & c2_cost_exceptions
-  const handleCommitData = async () => {
-    try {
-      setIsCommitting(true);
-
-      const processableList = records.filter((r) => r.status === "Valid");
-      if (processableList.length === 0) return;
-
-      // 1. Siapkan Payload Transaksi (TANPA KOLOM variance KARENA DIHITUNG OTOMATIS OLEH DATABASE)
-      const payload = processableList.map((r) => {
-        const isJobMissing = !r.jobNumber || r.jobNumber === "UNMATCHED" || r.jobNumber === "-" || r.jobNumber.includes("UNKNOWN");
-        const hasMissingEvidence = !r.hasEvidence;
-        const isHighCost = r.amount >= 50_000_000;
-        
-        const tags: string[] = [];
-        if (isJobMissing) tags.push("JOB_NOT_FOUND");
-        if (hasMissingEvidence) tags.push("MISSING_EVIDENCE");
-        if (isHighCost) tags.push("HIGH_COST");
-
-        const hasAnyAnomaly = tags.length > 0;
-
-        return {
-          voucher_no: r.voucherNo || r.recordId,
-          job_number: r.jobNumber || "UNMATCHED",
-          customer_name: r.customerName,
-          branch_code: r.branchCode || (cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional),
-          cost_category: r.category.toUpperCase().includes("GUDANG") || r.category.toUpperCase().includes("STOR")
-            ? "STORAGE"
-            : r.category.toUpperCase().includes("OPERASIONAL") || r.category.toUpperCase().includes("HANDL")
-            ? "HANDLING"
-            : "TRUCKING",
-          period_month: r.periodMonth || periode,
-          planned_cost: hasAnyAnomaly ? Math.round(r.amount * 0.9) : r.amount,
-          actual_cost: r.amount,
-          // PENTING: Kolom variance DIHAPUS agar tidak bentrok dengan Generated Column PostgreSQL
-          has_evidence: r.hasEvidence !== false,
-          evidence_url: r.hasEvidence ? (r.evidenceUrl || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf") : null,
-          reconciliation_result: isJobMissing ? "JOB_NOT_FOUND" : hasAnyAnomaly ? "OVER" : "MATCH",
-          review_flag: hasAnyAnomaly,
-          exception_tags: tags,
-          description: `Import file ${loadedFile?.name || "manual_upload"}`,
-          status: hasAnyAnomaly ? "Terbuka" : "Selesai",
-        };
-      });
-
-      // 2. Insert ke Tabel Transaksi Utama C2
-      const { data: insertedRows, error: insertError } = await supabase
-        .from("c2_cost_actual_transactions")
-        .insert(payload)
-        .select("id, job_number, actual_cost, planned_cost, review_flag, exception_tags");
-
-      if (insertError) {
-        throw new Error(insertError.message);
-      }
-
-      // 3. Catat Batch Ingesti ke c2_cost_ingestion_batches (TR-001)
-      const batchPayload = {
-        file_name: loadedFile?.name || "manual_upload",
-        file_size_bytes: loadedFile?.rawBytes || 1024,
-        period_month: periode,
-        branch_code: cabangOperasional === "Semua Cabang" ? "Jakarta Pusat" : cabangOperasional,
-        total_rows: kpiCounts.total,
-        valid_rows: kpiCounts.valid,
-        error_rows: kpiCounts.invalid,
-        total_amount: processableList.reduce((sum, r) => sum + r.amount, 0),
-        status: "COMMITTED",
-      };
-
-      const { data: batchData } = await supabase
-        .from("c2_cost_ingestion_batches")
-        .insert(batchPayload)
-        .select("batch_id")
-        .single();
-
-      // 4. Catat Log Anomali ke c2_cost_exceptions (TR-003)
-      if (insertedRows && insertedRows.length > 0) {
-        const exceptionRows = insertedRows
-          .filter((row: any) => row.review_flag)
-          .map((row: any) => ({
-            transaction_id: row.id,
-            job_number: row.job_number,
-            exception_tag: row.exception_tags?.[0] || "OVER_BUDGET",
-            budget_threshold: row.planned_cost,
-            actual_amount: row.actual_cost,
-            is_resolved: false,
-            resolution_notes: "Terdeteksi otomatis saat validasi ingesti berkas",
-          }));
-
-        if (exceptionRows.length > 0) {
-          await supabase.from("c2_cost_exceptions").insert(exceptionRows);
-        }
-      }
-
-      const generatedBatchId = batchData?.batch_id
-        ? `BATCH-${String(batchData.batch_id).slice(-6).toUpperCase()}`
-        : `BATCH-${Date.now().toString().slice(-6)}`;
-
-      setCommitSuccessData({
-        batchId: generatedBatchId,
-        count: processableList.length,
-      });
-
-      loadDatabaseData();
-    } catch (err: any) {
-      console.error("Gagal simpan Supabase:", err);
-      alert(`Gagal menyimpan data: ${err.message}`);
+      setError(err instanceof Error ? err.message : "Pratinjau gagal dibuat.");
     } finally {
-      setIsCommitting(false);
+      setBusy(false);
+      if (input.current) input.current.value = "";
     }
-  };
+  }
 
-  const handleCancel = () => {
-    setLoadedFile(null);
-    setRecords([]);
-    setProgress(0);
-    setValidationStage("Menunggu masukan berkas...");
-    setCommitSuccessData(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const isDisplayLoading = isLoading || isValidating;
+  async function commit() {
+    if (!draft || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const saved = await api<{ upload_id: string; inserted_rows: number }>(
+        "/api/v1/cost-ingestion/confirm",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ draftId: draft.draftId }),
+        }
+      );
+      setNotice(
+        `Penyimpanan berhasil: ${
+          saved.inserted_rows ?? draft.records.length
+        } baris. ID unggahan: ${saved.upload_id}. Waktu unggah tersedia pada riwayat.`
+      );
+      setDraft(null);
+      setConfirm(false);
+      history.reload();
+      status.reload();
+      filter.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Penyimpanan gagal.");
+      setConfirm(false);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="flex min-h-screen w-full bg-[#f4f7fc]">
-      {/* Sidebar Navigasi Bersatu */}
-      <Sidebar />
+    <Workspace
+      title="Data Upload"
+      description="Unggah Company Sales Report, periksa 14 kolom dan ringkasan, lalu konfirmasi penyimpanan."
+      action={
+        <Link href="/evidence" className={secondaryClass}>
+          Lihat Evidence
+        </Link>
+      }
+    >
+      <Filters
+        {...filter}
+        onPeriod={changePeriod}
+        refresh={() => {
+          filter.reload();
+          history.reload();
+          status.reload();
+        }}
+      />
 
-      {/* Konten Utama */}
-      <main className="flex-1 min-w-0 px-8 py-6 lg:ml-[260px] overflow-y-auto">
-        {/* Header Modul */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Data Upload
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Impor data cost bulanan melalui CSV atau Excel
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            {/* Tombol Sinkronkan Supabase */}
-            <button
-              onClick={loadDatabaseData}
-              disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer disabled:opacity-50"
-            >
-              <SlidersHorizontal className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
-              <span>Sinkronkan Supabase</span>
-            </button>
-
-            {/* Tombol Unduh Template */}
-            <button
-              onClick={handleDownloadTemplate}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
-            >
-              <Download className="h-3.5 w-3.5 text-slate-600" />
-              <span>Unduh Template</span>
-            </button>
-
-            {/* Tombol Notifikasi Lonceng */}
-            <div className="relative">
-              <button
-                aria-label="Lihat Notifikasi"
-                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 cursor-pointer ${
-                  isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
-                }`}
-              >
-                <Bell className="h-4 w-4" />
-                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
-              </button>
-
-              <NotificationPopover
-                isOpen={isNotificationOpen}
-                onClose={() => setIsNotificationOpen(false)}
-                periode={periode}
-                onViewAllExceptions={() => router.push("/cost-exception")}
-                dbExceptions={dbExceptions}
-              />
-            </div>
-
-            {/* Badge Periode Aktif Real-Time */}
-            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
-              <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
-              {currentLivePeriod}
-            </span>
-          </div>
-        </div>
-
-        {/* Notifikasi Sukses Commit Data */}
-        {commitSuccessData && (
-          <div className="mt-4 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 shadow-sm animate-in fade-in">
-            <div className="flex items-center gap-2.5">
-              <Check className="h-5 w-5 text-emerald-600" />
-              <div>
-                <p className="text-xs font-bold text-emerald-950">
-                  {commitSuccessData.count} Transaksi Berhasil Disimpan ke Supabase! (#{commitSuccessData.batchId})
-                </p>
-                <p className="text-[11px] text-emerald-700">
-                  Data staging berhasil disinkronkan dan langsung teragregasi di halaman Dashboard.
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => setCommitSuccessData(null)}
-              className="text-xs font-bold text-emerald-700 hover:underline cursor-pointer"
-            >
-              Tutup
-            </button>
-          </div>
-        )}
-
-        {/* Filter Bar Parameter Ingesti */}
-        <div className="mt-5 flex flex-wrap items-end gap-3">
-          <div className="w-52">
-            <CustomDropdown
-              label="Periode Data"
-              value={periode}
-              options={dynamicPeriodeOptions}
-              onChange={setPeriode}
-            />
-          </div>
-
-          <div className="w-56">
-            <CustomDropdown
-              label="Jenis Data"
-              value={jenis}
-              options={defaultJenisOptions}
-              onChange={setJenis}
-            />
-          </div>
-
-          <div className="w-56">
-            <CustomDropdown
-              label="Cabang Operasional"
-              value={cabangOperasional}
-              options={dynamicCabangOptions}
-              onChange={setCabangOperasional}
-            />
-          </div>
-
-          <div className="inline-flex h-[38px] items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 text-xs font-semibold text-[#0284c7]">
-            <Info className="h-4 w-4 text-[#0284c7]" />
-            <span>Gunakan format template versi 3.2</span>
-          </div>
-        </div>
-
-        {/* Zona Upload & Panel File Terpilih */}
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1.6fr_1fr]">
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-                processUploadedFile(e.dataTransfer.files[0]);
-              }
-            }}
-            className={`flex flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition ${
-              dragging
-                ? "border-sky-500 bg-sky-50/70"
-                : "border-sky-200 bg-white hover:border-sky-300"
-            }`}
-          >
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-              <UploadCloud className="h-6 w-6" />
-            </div>
-
-            <p className="mt-3 text-sm font-semibold text-slate-800">
-              Tarik file ke sini atau pilih dari perangkat
-            </p>
-            <p className="mt-1 text-[11px] text-slate-400">
-              Format .xlsx, .xls, atau .csv · Maksimal 25 MB
-            </p>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
-            >
-              <FileText className="h-3.5 w-3.5 text-slate-600" />
-              <span>Pilih File</span>
-            </button>
+      <Card title="Periode dan dokumen sumber">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+          <label className="text-xs font-semibold text-slate-600">
+            Periode baru (bila belum ada pada daftar)
             <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files && e.target.files[0]) {
-                  processUploadedFile(e.target.files[0]);
-                }
+              type="month"
+              value={currentMonthValue}
+              className={`${fieldClass} mt-1.5`}
+              disabled={busy}
+              onChange={(event) => {
+                if (event.target.value) changePeriod(event.target.value);
               }}
             />
-          </div>
-
-          {/* Panel File Terpilih */}
-          <div className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">File Terpilih</h3>
-                  <p className="text-[11px] text-slate-400">
-                    {loadedFile ? "Siap divalidasi" : "Belum ada berkas yang dipilih"}
-                  </p>
-                </div>
-                {loadedFile && !isValidating && (
-                  <button
-                    onClick={handleCancel}
-                    title="Ganti Berkas"
-                    className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition cursor-pointer"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-
-              {loadedFile ? (
-                <div className="mt-4 flex items-center justify-between rounded-xl bg-slate-50/80 p-3.5 border border-slate-100">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600">
-                      <FileSpreadsheet className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-bold text-slate-800 truncate max-w-[180px]">
-                        {loadedFile.name}
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        {loadedFile.rowCount.toLocaleString("id-ID")} baris · {loadedFile.size}
-                      </p>
-                    </div>
-                  </div>
-                  <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-                </div>
-              ) : (
-                <div className="mt-4 flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 py-6 text-center text-slate-400">
-                  <FileSpreadsheet className="h-8 w-8 text-slate-300 stroke-1" />
-                  <p className="mt-2 text-xs font-medium text-slate-500">Belum ada file dipilih</p>
-                  <p className="text-[11px] text-slate-400">Unggah file CSV atau Excel di sebelah kiri</p>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold text-slate-600">
-                  {isValidating
-                    ? validationStage
-                    : loadedFile
-                    ? "Validasi struktur & isi"
-                    : "Status Validasi"}
-                </span>
-                <span className="text-[11px] font-bold text-[#0a7ebf]">{progress}%</span>
-              </div>
-              <div className="mt-1.5 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-                <div
-                  className="h-1.5 rounded-full bg-[#0a7ebf] transition-all duration-300"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="mt-1.5 text-[11px] text-slate-400">
-                {isValidating
-                  ? validationStage
-                  : loadedFile
-                  ? "Pemeriksaan selesai. Data siap dipratinjau & dikomit."
-                  : "Menunggu masukan berkas..."}
+          </label>
+          <div className="text-sm text-slate-500">
+            {user.data && (
+              <p>
+                {user.data.name} · {user.data.role}
               </p>
-            </div>
+            )}
+            {status.data && (
+              <div className="mt-2">
+                <Status validated={locked} />
+              </div>
+            )}
           </div>
         </div>
 
-        {/* 3 Kartu KPI Ringkasan: TOTAL BARIS, VALID, INVALID */}
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-          {isDisplayLoading ? (
-            <>
-              <KpiSkeletonCard />
-              <KpiSkeletonCard />
-              <KpiSkeletonCard />
-            </>
-          ) : (
-            <>
-              {/* TOTAL BARIS */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    TOTAL BARIS
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#e0f2fe] text-[#0a7ebf]">
-                    <ListChecks className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <h2 className="text-2xl font-bold text-slate-900">
-                    {kpiCounts.total.toLocaleString("id-ID")}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  {loadedFile ? "Terbaca dari sheet berkas" : "Menunggu berkas diunggah"}
-                </p>
-              </div>
+        <LoadState
+          loading={filter.loading || status.loading || user.loading}
+          error={filter.error || status.error || user.error}
+          onRetry={() => {
+            status.reload();
+            user.reload();
+          }}
+        />
 
-              {/* VALID */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    VALID
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#dcfce7] text-[#16a34a]">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <h2 className="text-2xl font-bold text-slate-900">
-                    {kpiCounts.valid.toLocaleString("id-ID")}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  {kpiCounts.total > 0
-                    ? `${((kpiCounts.valid / kpiCounts.total) * 100).toFixed(1).replace(".", ",")}% siap diunggah`
-                    : "0% siap diunggah"}
-                </p>
-              </div>
+        {locked && (
+          <Notice>
+            Periode ini telah divalidasi. Unggahan baru tidak dapat disimpan
+            pada periode terkunci.
+          </Notice>
+        )}
 
-              {/* INVALID */}
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    INVALID
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ffe4e6] text-[#e11d48]">
-                    <XCircle className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <h2 className="text-2xl font-bold text-slate-900">
-                    {kpiCounts.invalid}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  Format atau nilai tidak sesuai
-                </p>
-              </div>
-            </>
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            if (!disabled) setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            if (event.dataTransfer.files.length > 1) {
+              setError("Unggah satu berkas setiap kali.");
+            } else {
+              void preview(event.dataTransfer.files[0]);
+            }
+          }}
+          className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+            dragging
+              ? "border-sky-600 bg-sky-100"
+              : "border-slate-300 bg-slate-50"
+          }`}
+        >
+          <UploadCloud className="mx-auto mb-3 text-sky-700" size={36} />
+          <p className="font-semibold text-slate-800">
+            Tarik berkas Company Sales Report ke sini
+          </p>
+          <p className="mb-4 mt-2 text-sm text-slate-500">
+            CSV atau XLSX · maksimal 25 MB · pilih periode terlebih dahulu
+          </p>
+          <input
+            ref={input}
+            type="file"
+            className="sr-only"
+            accept=".csv,.xlsx"
+            aria-label="Pilih Company Sales Report"
+            disabled={disabled}
+            onChange={(event) => void preview(event.target.files?.[0])}
+          />
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={disabled}
+            onClick={() => input.current?.click()}
+          >
+            {busy ? "Memproses…" : "Pilih berkas"}
+          </button>
+          {fileName && (
+            <p className="mt-3 break-all text-sm font-medium text-slate-700">
+              {fileName}
+            </p>
           )}
         </div>
+        <p className="mt-4 text-xs leading-relaxed text-slate-500">
+          Kolom wajib: Periode, Job Number, Company, MAWB No., CW, DEST, Invoice
+          Nominal, Sub Total, VAT, Cost PPH 23, Others, DIP IATA, Total Cost,
+          dan Profit.
+        </p>
+      </Card>
 
-        {/* Tabel Preview Data */}
-        <div className="mt-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900">Preview Data</h3>
-              <p className="text-[11px] text-slate-400">
-                Menampilkan {displayedRecords.length} dari {kpiCounts.total.toLocaleString("id-ID")} baris
-              </p>
-            </div>
+      {error && <Notice error>{error}</Notice>}
+      {notice && <Notice>{notice}</Notice>}
 
-            {/* Tombol Tab Filter: Semua, Invalid, Valid */}
-            <div className="flex items-center gap-2">
+      {draft && (
+        <>
+          <Kpis
+            items={[
+              {
+                label: "Baris valid",
+                value: number(draft.records.length),
+              },
+              {
+                label: "Total perusahaan",
+                value: number(
+                  new Set(draft.records.map((row) => row.company_name)).size
+                ),
+              },
+              {
+                label: "Total Cost",
+                value: money(
+                  draft.records.reduce(
+                    (sum, row) => sum + amount(row.total_cost),
+                    0
+                  )
+                ),
+              },
+            ]}
+          />
+          {draft.warnings?.map((warning, index) => (
+            <Notice key={index}>{warning}</Notice>
+          ))}
+          <Card
+            title={`Pratinjau 14 kolom · ${draft.period}`}
+            action={
               <button
-                onClick={() => setFilterTab("Semua")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
-                  filterTab === "Semua"
-                    ? "bg-[#e0f2fe] text-[#0a7ebf]"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
+                type="button"
+                className={buttonClass}
+                disabled={busy || locked}
+                onClick={() => setConfirm(true)}
               >
-                Semua {kpiCounts.total.toLocaleString("id-ID")}
+                Konfirmasi penyimpanan
               </button>
+            }
+          >
+            <SalesTable records={draft.records} />
+          </Card>
+        </>
+      )}
 
-              <button
-                onClick={() => setFilterTab("Invalid")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
-                  filterTab === "Invalid"
-                    ? "bg-[#ffe4e6] text-[#e11d48]"
-                    : "bg-rose-50/70 text-[#e11d48] hover:bg-rose-100"
-                }`}
-              >
-                Invalid {kpiCounts.invalid}
-              </button>
+      <Card title="Riwayat unggahan periode">
+        <LoadState
+          loading={history.loading}
+          error={history.error}
+          onRetry={history.reload}
+        />
+        {history.data && <HistoryTable rows={history.data} />}
+      </Card>
 
-              <button
-                onClick={() => setFilterTab("Valid")}
-                className={`rounded-full px-3 py-1 text-xs font-semibold transition cursor-pointer ${
-                  filterTab === "Valid"
-                    ? "bg-[#dcfce7] text-[#16a34a]"
-                    : "bg-emerald-50/70 text-[#16a34a] hover:bg-emerald-100"
-                }`}
-              >
-                Valid {kpiCounts.valid.toLocaleString("id-ID")}
-              </button>
-            </div>
+      {confirm && draft && (
+        <Modal
+          title="Konfirmasi penyimpanan Company Sales Report"
+          onClose={() => setConfirm(false)}
+          busy={busy}
+        >
+          <p className="text-sm leading-relaxed text-slate-700">
+            Simpan <strong>{draft.records.length} baris</strong> dari{" "}
+            <strong>{fileName}</strong> untuk periode{" "}
+            <strong>{draft.period}</strong>? Data biaya dan riwayat unggahan
+            akan disimpan bersama.
+          </p>
+          <div className="mt-6 flex justify-end gap-3">
+            <button
+              type="button"
+              className={secondaryClass}
+              disabled={busy}
+              onClick={() => setConfirm(false)}
+            >
+              Kembali ke pratinjau
+            </button>
+            <button
+              type="button"
+              className={buttonClass}
+              disabled={busy}
+              onClick={() => void commit()}
+            >
+              {busy ? "Menyimpan…" : "Simpan data"}
+            </button>
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-100 text-[11px] font-semibold text-slate-400">
-                  <th className="py-3 px-2">ID RECORD</th>
-                  <th className="py-3 px-2">CUSTOMER</th>
-                  <th className="py-3 px-2">KATEGORI</th>
-                  <th className="py-3 px-2">NOMINAL</th>
-                  <th className="py-3 px-2 text-center">STATUS</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {isDisplayLoading ? (
-                  <>
-                    <TableSkeletonRow />
-                    <TableSkeletonRow />
-                    <TableSkeletonRow />
-                    <TableSkeletonRow />
-                  </>
-                ) : displayedRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-12 text-center text-xs text-slate-400">
-                      {loadedFile
-                        ? "Tidak ada data pada kategori status ini."
-                        : "Belum ada data untuk dipratinjau. Silakan unggah berkas CSV atau Excel terlebih dahulu."}
-                    </td>
-                  </tr>
-                ) : (
-                  displayedRecords.slice(0, 10).map((row) => (
-                    <tr key={row.id} className="hover:bg-slate-50/60 transition">
-                      <td className="py-3 px-2 font-mono font-medium text-slate-600">
-                        {row.recordId}
-                      </td>
-                      <td className="py-3 px-2 font-semibold text-slate-900">
-                        {row.customerName}
-                      </td>
-                      <td className="py-3 px-2 text-slate-600">
-                        {row.category}
-                      </td>
-                      <td className="py-3 px-2 font-medium text-slate-900">
-                        {formatRupiah(row.amount)}
-                      </td>
-                      <td className="py-3 px-2 text-center">
-                        <span
-                          className={`inline-block rounded-full px-3 py-0.5 text-[11px] font-semibold ${
-                            row.status === "Valid"
-                              ? "bg-[#dcfce7] text-[#16a34a]"
-                              : "bg-[#ffe4e6] text-[#e11d48]"
-                          }`}
-                        >
-                          {row.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="mt-5 flex items-center justify-between pt-3 border-t border-slate-100">
-            <p className="text-xs text-slate-400">
-              {kpiCounts.invalid} baris invalid akan dilewati saat upload
-            </p>
-
-            <div className="flex items-center gap-2.5">
-              <button
-                onClick={handleCancel}
-                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 cursor-pointer"
-              >
-                Batalkan
-              </button>
-
-              <button
-                onClick={handleCommitData}
-                disabled={isCommitting || kpiCounts.processable === 0}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#0a7ebf] px-5 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              >
-                {isCommitting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Play className="h-3.5 w-3.5 fill-white" />
-                )}
-                <span>Proses {kpiCounts.processable.toLocaleString("id-ID")} Data</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </main>
-    </div>
+        </Modal>
+      )}
+    </Workspace>
   );
 }

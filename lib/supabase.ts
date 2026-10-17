@@ -1,8 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl =
-  process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co';
-const supabaseAnonKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key';
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@/utils/supabase/client";
+// Lazy initialization preserves login imports. Browser sessions use SSR cookies.
+export const supabase = new Proxy({} as SupabaseClient, {
+  get(_target, property) {
+    const client = createClient();
+    const value = Reflect.get(client, property);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});

@@ -1,1110 +1,238 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import ExcelJS from "exceljs";
+import Link from "next/link";
+import { useState, useMemo } from "react";
 import {
-  Download,
-  Bell,
-  CalendarDays,
-  SlidersHorizontal,
-  CreditCard,
-  Landmark,
-  TrendingUp,
-  Users,
-  CheckCircle2,
-  Loader2,
-  X,
-  RefreshCw,
-  AlertCircle,
-  FileText,
-  ArrowRight,
-  ShieldAlert,
-} from "lucide-react";
+  Workspace,
+  Card,
+  Filters,
+  Kpis,
+  LoadState,
+  Notice,
+  SummaryTable,
+  Status,
+  buttonClass,
+} from "@/components/c2-workspace";
+import {
+  amount,
+  money,
+  number,
+  query,
+  useApi,
+  useFilter,
+  usePeriod,
+  type DashboardData,
+} from "@/lib/c2-client";
 
-import Sidebar from "@/components/sidebar";
-import BudgetChart from "./BudgetChart";
-import CustomerBreakdown from "./CustomerBreakdown";
-import ExceptionSummary from "./ExceptionSummary";
-import DataHealth from "./DataHealth";
-import CustomDropdown, { DropdownOption } from "./CustomDropdown";
-import { supabase } from "@/lib/supabase";
-
-export interface CostTransaction {
-  id: string;
-  job_number: string;
-  customer_name: string;
-  branch_code: string;
-  cost_category: string;
-  period_month: string;
-  planned_cost: number;
-  actual_cost: number;
-  variance: number;
-  has_evidence: boolean;
-  evidence_url: string | null;
-  reconciliation_result: string;
-  review_flag: boolean;
-  exception_tags: string[];
-  voucher_no: string;
-  description: string;
-  is_job_matched: boolean;
-  status?: string;
-  consignee?: string;
-  shipper?: string;
-  created_at?: string;
-}
-
-const MONTH_NAMES_ID = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+const colors = [
+  "#087ebd",
+  "#179c77",
+  "#f59e0b",
+  "#7c3aed",
+  "#e45c79",
+  "#0891b2",
+  "#4f46e5",
+  "#65a30d",
 ];
 
-function getDynamicPeriod(offsetMonths = 0): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - offsetMonths);
-  return `${MONTH_NAMES_ID[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-const formatCompactRupiah = (val: number) => {
-  if (val === 0) return "Rp 0";
-  if (Math.abs(val) >= 1_000_000_000) {
-    return `Rp ${(val / 1_000_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 2 })} M`;
-  }
-  if (Math.abs(val) >= 1_000_000) {
-    return `Rp ${(val / 1_000_000).toLocaleString("id-ID", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} jt`;
-  }
-  return `Rp ${val.toLocaleString("id-ID")}`;
-};
-
-const parseTags = (raw: unknown): string[] => {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === "string") {
-    try {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
-};
-
-const FALLBACK_CUSTOMERS = [
-  "PT CEVA AIR OCEAN INDONESIA",
-  "PT MAERSK LOGISTICS INDONESIA",
-  "PT DSV TRANSPORT INDONESIA",
-  "PT GARUDA TEKNOLOGI",
-];
-
-export function cleanCustomerName(raw: unknown, index = 0): string {
-  if (!raw) return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
-  if (typeof raw === "object" && raw !== null) {
-    const obj = raw as Record<string, unknown>;
-    const extracted = obj.text || obj.name || obj.label || obj.result || "";
-    if (extracted && typeof extracted === "string") return cleanCustomerName(extracted, index);
-    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
-  }
-  const str = String(raw).trim();
-  const lower = str.toLowerCase();
-  if (
-    !str ||
-    str === "-" ||
-    lower === "web url" ||
-    lower === "web_url" ||
-    lower.includes("[object object]") ||
-    lower === "null" ||
-    lower === "undefined" ||
-    lower.startsWith("http://") ||
-    lower.startsWith("https://")
-  ) {
-    return FALLBACK_CUSTOMERS[index % FALLBACK_CUSTOMERS.length];
-  }
-  return str;
-}
-
-export function cleanBranchName(raw: unknown): string {
-  if (!raw || typeof raw === "object") return "Jakarta Pusat";
-  const str = String(raw).trim();
-  const lower = str.toLowerCase();
-  if (
-    !str ||
-    str === "-" ||
-    lower === "web url" ||
-    lower === "web_url" ||
-    lower.includes("[object object]") ||
-    lower === "null" ||
-    lower === "undefined" ||
-    lower.startsWith("http")
-  ) {
-    return "Jakarta Pusat";
-  }
-  return str;
-}
-
-function KpiSkeletonCard() {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm animate-pulse">
-      <div className="flex items-start justify-between">
-        <div className="h-3 w-20 rounded bg-slate-200" />
-        <div className="h-7 w-7 rounded-lg bg-slate-100" />
-      </div>
-      <div className="mt-3 flex items-center gap-2">
-        <div className="h-7 w-28 rounded bg-slate-200" />
-        <div className="h-4 w-12 rounded bg-slate-100" />
-      </div>
-      <div className="mt-3 h-3 w-36 rounded bg-slate-100" />
-    </div>
-  );
-}
-
-function SectionSkeletonCard({ height = "h-72" }: { height?: string }) {
-  return (
-    <div className={`rounded-xl border border-slate-200 bg-white p-5 shadow-sm animate-pulse ${height}`}>
-      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-        <div className="space-y-1.5">
-          <div className="h-4 w-44 rounded bg-slate-200" />
-          <div className="h-3 w-56 rounded bg-slate-100" />
-        </div>
-        <div className="h-6 w-16 rounded bg-slate-100" />
-      </div>
-      <div className="mt-6 flex h-4/5 items-center justify-center">
-        <div className="flex flex-col items-center gap-2 text-slate-300">
-          <Loader2 className="h-6 w-6 animate-spin text-sky-500" />
-          <span className="text-xs font-medium text-slate-400">Sinkronisasi data Supabase...</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// =========================================================================
-// SUB-KOMPONEN: NOTIFICATION POPOVER (FIX QA: Notif hilang saat diklik)
-// =========================================================================
-interface NotificationPopoverProps {
-  isOpen: boolean;
-  onClose: () => void;
-  transactions?: CostTransaction[];
-  periode?: string;
-  isMarkedAllRead: boolean;
-  dismissedTags: string[];
-  onToggleMarkAllRead: () => void;
-  onNavigateException: (category?: string) => void;
-}
-
-function NotificationPopover({
-  isOpen,
-  onClose,
-  transactions = [],
-  periode,
-  isMarkedAllRead,
-  dismissedTags,
-  onToggleMarkAllRead,
-  onNavigateException,
-}: NotificationPopoverProps) {
-  const [activeTab, setActiveTab] = useState<"semua" | "belum_dibaca">("semua");
-
-  const visibleNotifCards = useMemo(() => {
-    if (isMarkedAllRead) return [];
-
-    let overBudget = 0;
-    let overBudgetSum = 0;
-    let highCost = 0;
-    let highCostSum = 0;
-    let missingEvidence = 0;
-    let missingEvidenceSum = 0;
-    let unmatched = 0;
-    let unmatchedSum = 0;
-
-    const activeTx = transactions.filter((t) => t.status !== "Selesai");
-
-    activeTx.forEach((t) => {
-      const actual = Number(t.actual_cost) || 0;
-      const planned = Number(t.planned_cost) || 0;
-      const variance = Number(t.variance) || (actual - planned);
-
-      if (variance > 0 || t.exception_tags?.includes("OVER_BUDGET")) {
-        overBudget++;
-        overBudgetSum += actual;
-      }
-      if (actual >= 50_000_000 || t.exception_tags?.includes("HIGH_COST")) {
-        highCost++;
-        highCostSum += actual;
-      }
-      if (!t.has_evidence || t.exception_tags?.includes("MISSING_EVIDENCE")) {
-        missingEvidence++;
-        missingEvidenceSum += actual;
-      }
-      if (
-        !t.is_job_matched ||
-        t.job_number === "UNMATCHED" ||
-        t.exception_tags?.includes("JOB_NOT_FOUND") ||
-        t.exception_tags?.includes("DUPLICATE_DATA")
-      ) {
-        unmatched++;
-        unmatchedSum += actual;
-      }
-    });
-
-    const cards = [];
-    if (overBudget > 0 && !dismissedTags.includes("Over Budget")) {
-      cards.push({
-        tag: "Over Budget",
-        title: "Over Budget",
-        count: overBudget,
-        value: formatCompactRupiah(overBudgetSum),
-        desc: "Realisasi biaya melebihi budget. Tinjau penyebab selisih dan kesesuaian anggaran.",
-        action: "Prioritas review anggaran →",
-        icon: TrendingUp,
-        iconBg: "bg-rose-50 text-[#e11d48]",
-        badgeClass: "bg-rose-50 text-rose-600",
-        actionColor: "text-[#e11d48]",
-      });
-    }
-    if (highCost > 0 && !dismissedTags.includes("High Cost")) {
-      cards.push({
-        tag: "High Cost",
-        title: "High Cost",
-        count: highCost,
-        value: formatCompactRupiah(highCostSum),
-        desc: "Biaya tunggal di atas threshold rule. Periksa kewajaran nominal dan detail transaksi.",
-        action: "Perlu peninjauan biaya →",
-        icon: AlertCircle,
-        iconBg: "bg-rose-50 text-[#e11d48]",
-        badgeClass: "bg-rose-50 text-rose-600",
-        actionColor: "text-[#e11d48]",
-      });
-    }
-    if (missingEvidence > 0 && !dismissedTags.includes("Missing Evidence")) {
-      cards.push({
-        tag: "Missing Evidence",
-        title: "Missing Evidence",
-        count: missingEvidence,
-        value: formatCompactRupiah(missingEvidenceSum),
-        desc: "Dokumen bukti belum lengkap. Lengkapi kuitansi yang valid untuk verifikasi biaya.",
-        action: "Perlu kelengkapan dokumen →",
-        icon: FileText,
-        iconBg: "bg-amber-50 text-amber-600",
-        badgeClass: "bg-amber-50 text-amber-700",
-        actionColor: "text-amber-600",
-      });
-    }
-    if (unmatched > 0 && !dismissedTags.includes("Duplicate Data")) {
-      cards.push({
-        tag: "Duplicate Data",
-        title: "Unmatched CRM",
-        count: unmatched,
-        value: formatCompactRupiah(unmatchedSum),
-        desc: "Nomor pekerjaan tidak ditemukan di master database CRM.",
-        action: "Verifikasi Job Number →",
-        icon: ShieldAlert,
-        iconBg: "bg-purple-50 text-purple-600",
-        badgeClass: "bg-purple-50 text-purple-700",
-        actionColor: "text-purple-600",
-      });
-    }
-
-    return cards;
-  }, [transactions, isMarkedAllRead, dismissedTags]);
-
-  const remainingExceptionsCount = useMemo(() => {
-    return visibleNotifCards.reduce((acc, c) => acc + c.count, 0);
-  }, [visibleNotifCards]);
-
-  if (!isOpen) return null;
-
-  return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/5" onClick={onClose} />
-
-      <div className="absolute right-0 top-11 z-50 w-[380px] rounded-2xl border border-slate-200/90 bg-white shadow-2xl animate-in fade-in slide-in-from-top-2">
-        <div className="p-5 pb-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-slate-900">Notifikasi</h2>
-              {remainingExceptionsCount > 0 && (
-                <span className="h-2 w-2 rounded-full bg-[#0a7ebf]" />
-              )}
-            </div>
-
-            <button
-              onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-100 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 cursor-pointer"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <p className="mt-2 text-xs font-bold text-slate-800">
-            {remainingExceptionsCount} exception perlu tindak lanjut
-          </p>
-          <p className="mt-0.5 text-[11px] text-slate-400">
-            Ringkasan exception · {periode}
-          </p>
-
-          <button
-            onClick={onToggleMarkAllRead}
-            className="mt-3 text-xs font-semibold text-[#0a7ebf] transition hover:underline cursor-pointer"
-          >
-            {visibleNotifCards.length === 0 ? "Tampilkan belum dibaca" : "Tandai semua dibaca"}
-          </button>
-
-          <div className="mt-3 flex items-center gap-5 border-b border-slate-100">
-            <button
-              onClick={() => setActiveTab("semua")}
-              className={`pb-2 text-xs font-bold transition cursor-pointer ${
-                activeTab === "semua"
-                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf]"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Semua
-            </button>
-            <button
-              onClick={() => setActiveTab("belum_dibaca")}
-              className={`pb-2 text-xs font-medium transition cursor-pointer ${
-                activeTab === "belum_dibaca"
-                  ? "border-b-2 border-[#0a7ebf] text-[#0a7ebf] font-bold"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Belum dibaca
-            </button>
-          </div>
-        </div>
-
-        <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-100 text-left">
-          {visibleNotifCards.length === 0 ? (
-            <div className="py-10 text-center text-xs text-slate-400">
-              Semua notifikasi telah ditinjau / ditandai dibaca.
-            </div>
-          ) : (
-            visibleNotifCards.map((card) => {
-              const IconComp = card.icon;
-              return (
-                <div
-                  key={card.tag}
-                  onClick={() => onNavigateException(card.tag)}
-                  className="flex gap-3.5 p-5 transition hover:bg-slate-50 cursor-pointer"
-                >
-                  <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${card.iconBg}`}>
-                    <IconComp className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-slate-900">{card.title}</h3>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${card.badgeClass}`}>
-                        {card.count} item
-                      </span>
-                    </div>
-                    <p className="mt-1 text-sm font-bold text-slate-900">{card.value}</p>
-                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">{card.desc}</p>
-                    <span className={`mt-2 block text-[11px] font-bold ${card.actionColor}`}>
-                      {card.action}
-                    </span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <div className="rounded-b-2xl bg-[#edf8fd] p-3 text-center border-t border-sky-100/60">
-          <button
-            onClick={() => onNavigateException()}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0a7ebf] transition hover:text-[#08689d] cursor-pointer"
-          >
-            <span>Lihat semua exception</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// =========================================================================
-// KOMPONEN UTAMA DASHBOARD
-// =========================================================================
 export default function DashboardPage() {
-  const router = useRouter();
-  const currentLivePeriod = useMemo(() => getDynamicPeriod(0), []);
+  const filter = usePeriod();
+  const [company, setCompany] = useFilter("company");
+  const [hovered, setHovered] = useState<string | null>(null);
 
-  const [allTransactions, setAllTransactions] = useState<CostTransaction[]>([]);
-  const [filteredTransactions, setFilteredTransactions] = useState<CostTransaction[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const all = useApi<DashboardData>(
+    filter.period
+      ? query("/api/v1/cost-analytics/dashboard-summary", {
+          period: filter.period,
+          company: "ALL",
+        })
+      : null
+  );
 
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [isNotifMarkedRead, setIsNotifMarkedRead] = useState(false);
-  const [dismissedNotifTags, setDismissedNotifTags] = useState<string[]>([]);
+  const selected = useApi<DashboardData>(
+    filter.period && company !== "ALL"
+      ? query("/api/v1/cost-analytics/dashboard-summary", {
+          period: filter.period,
+          company,
+        })
+      : null
+  );
 
-  const [periode, setPeriode] = useState<string>("ALL");
-  const [customer, setCustomer] = useState<string>("ALL");
-  const [cabang, setCabang] = useState<string>("ALL");
-  const [isFiltering, setIsFiltering] = useState(false);
+  const result = company === "ALL" ? all : selected;
+  const data = result.data;
+  const rows = data?.companies ?? [];
 
-  const [exportState, setExportState] = useState<"idle" | "queueing" | "ready">("idle");
-  const [exportJobId, setExportJobId] = useState<string | null>(null);
+  const chartTotal = useMemo(
+    () => rows.reduce((sum, row) => sum + amount(row.sum_total_cost), 0),
+    [rows]
+  );
 
-  const syncNotifStorage = useCallback(() => {
-    if (typeof window !== "undefined") {
-      setIsNotifMarkedRead(localStorage.getItem("c2_notif_read") === "true");
-      try {
-        const saved = JSON.parse(localStorage.getItem("c2_dismissed_notif_tags") || "[]");
-        setDismissedNotifTags(Array.isArray(saved) ? saved : []);
-      } catch {
-        setDismissedNotifTags([]);
-      }
-    }
-  }, []);
+  const positive = chartTotal > 0 && rows.every((row) => amount(row.sum_total_cost) >= 0);
 
-  useEffect(() => {
-    syncNotifStorage();
-    if (typeof window !== "undefined") {
-      window.addEventListener("storage", syncNotifStorage);
-      return () => window.removeEventListener("storage", syncNotifStorage);
-    }
-  }, [syncNotifStorage]);
+  const slices = useMemo(() => {
+    if (!rows.length) return [];
+    const list = rows.map((row, index) => {
+      const before = rows
+        .slice(0, index)
+        .reduce((sum, item) => sum + amount(item.company_share_pct), 0);
+      return `${colors[index % colors.length]} ${before}% ${before + amount(row.company_share_pct)}%`;
+    });
+    const shownShare = rows.reduce((total, row) => total + amount(row.company_share_pct), 0);
+    if (shownShare < 100) list.push(`#e2e8f0 ${shownShare}% 100%`);
+    return list;
+  }, [rows]);
 
-  // Simpan filter Dashboard yang aktif ke sessionStorage agar ExceptionSummary selalu sinkron
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      sessionStorage.setItem("c2_dash_period", periode);
-      sessionStorage.setItem("c2_dash_customer", customer);
-      sessionStorage.setItem("c2_dash_branch", cabang);
-    }
-  }, [periode, customer, cabang]);
+  const maximum = useMemo(() => {
+    if (!rows.length) return 1;
+    return Math.max(1, ...rows.map((row) => Math.abs(amount(row.sum_total_cost))));
+  }, [rows]);
 
-  const handleToggleMarkAllRead = () => {
-    if (isNotifMarkedRead || dismissedNotifTags.length >= 4) {
-      setIsNotifMarkedRead(false);
-      setDismissedNotifTags([]);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("c2_notif_read", "false");
-        localStorage.removeItem("c2_dismissed_notif_tags");
-      }
-    } else {
-      const allTags = ["Over Budget", "High Cost", "Missing Evidence", "Duplicate Data"];
-      setIsNotifMarkedRead(true);
-      setDismissedNotifTags(allTags);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("c2_notif_read", "true");
-        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(allTags));
-      }
-    }
-  };
-
-  // PERBAIKAN QA 2: Saat item notifikasi diklik, sembunyikan item tersebut dari daftar notifikasi & arahkan ke halaman
-  const handleNavigateException = (category?: string) => {
-    setIsNotificationOpen(false);
-    if (category) {
-      const updated = Array.from(new Set([...dismissedNotifTags, category]));
-      setDismissedNotifTags(updated);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("c2_dismissed_notif_tags", JSON.stringify(updated));
-        sessionStorage.setItem("c2_filter_tag", category);
-        if (customer !== "ALL") {
-          sessionStorage.setItem("c2_filter_customer", customer);
-        } else {
-          sessionStorage.removeItem("c2_filter_customer");
-        }
-        if (cabang !== "ALL") {
-          sessionStorage.setItem("c2_filter_branch", cabang);
-        } else {
-          sessionStorage.removeItem("c2_filter_branch");
-        }
-        if (periode !== "ALL") {
-          sessionStorage.setItem("c2_filter_period", periode);
-        } else {
-          sessionStorage.removeItem("c2_filter_period");
-        }
-      }
-      router.push("/cost-exception");
-    } else {
-      router.push("/cost-exception");
-    }
-  };
-
-  const dynamicPeriodeOptions: DropdownOption[] = useMemo(() => [
-    { value: "ALL", label: "Semua Periode" },
-    { value: getDynamicPeriod(0), label: getDynamicPeriod(0) },
-    { value: getDynamicPeriod(1), label: getDynamicPeriod(1) },
-    { value: getDynamicPeriod(2), label: getDynamicPeriod(2) },
-    { value: getDynamicPeriod(3), label: getDynamicPeriod(3) },
-  ], []);
-
-  const fetchSupabaseData = useCallback(async () => {
-    try {
-      setIsSyncing(true);
-      const { data, error } = await supabase
-        .from("c2_cost_transactions")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      const resolvedMap: Record<string, { status: string; notes: string }> =
-        typeof window !== "undefined"
-          ? JSON.parse(localStorage.getItem("c2_exception_status_sync") || localStorage.getItem("c2_resolved_exceptions") || "{}")
-          : {};
-
-      if (error) {
-        console.error("Gagal mengambil data dari Supabase:", error.message);
-        setAllTransactions([]);
-        setFilteredTransactions([]);
-      } else if (data) {
-        const formatted: CostTransaction[] = data.map((item, idx) => {
-          const localResolved = resolvedMap[item.id];
-          const isResolved =
-            localResolved?.status === "Selesai" ||
-            item.status === "Selesai" ||
-            item.status_computed === "Selesai" ||
-            item.is_resolved === true;
-
-          return {
-            id: item.id,
-            job_number: item.job_number || "-",
-            customer_name: cleanCustomerName(item.customer_name, idx),
-            branch_code: cleanBranchName(item.branch_code),
-            cost_category: item.cost_category || "TRUCKING",
-            period_month: item.period_month || currentLivePeriod,
-            planned_cost: Number(item.planned_cost || 0),
-            actual_cost: Number(item.actual_cost || 0),
-            variance: Number(item.variance || 0),
-            has_evidence: Boolean(item.has_evidence),
-            evidence_url: item.evidence_url || null,
-            reconciliation_result: item.reconciliation_result || "MATCH",
-            review_flag: isResolved ? false : Boolean(item.review_flag),
-            exception_tags: parseTags(item.exception_tags),
-            voucher_no: item.voucher_no || "-",
-            description: localResolved?.notes || item.description || "",
-            is_job_matched: Boolean(item.is_job_matched),
-            status: isResolved ? "Selesai" : item.status || "Terbuka",
-            consignee: item.consignee,
-            shipper: item.shipper,
-            created_at: item.created_at,
-          };
-        });
-
-        setAllTransactions(formatted);
-        setFilteredTransactions(formatted);
-      }
-    } catch (err) {
-      console.error("Koneksi Supabase error:", err);
-      setAllTransactions([]);
-      setFilteredTransactions([]);
-    } finally {
-      setIsSyncing(false);
-      setIsLoading(false);
-    }
-  }, [currentLivePeriod]);
-
-  useEffect(() => {
-    fetchSupabaseData();
-  }, [fetchSupabaseData]);
-
-  // Terapkan filter secara reaktif setiap kali dropdown Periode, Customer, atau Cabang diubah maupun tombol diklik
-  useEffect(() => {
-    let filtered = [...allTransactions];
-    if (periode !== "ALL") {
-      filtered = filtered.filter((t) => t.period_month === periode);
-    }
-    if (customer !== "ALL") {
-      filtered = filtered.filter((t) => t.customer_name === customer);
-    }
-    if (cabang !== "ALL") {
-      filtered = filtered.filter((t) => t.branch_code === cabang);
-    }
-    setFilteredTransactions(filtered);
-  }, [allTransactions, periode, customer, cabang]);
-
-  const dynamicCustomerOptions: DropdownOption[] = useMemo(() => {
-    const unique = Array.from(
-      new Set(allTransactions.map((t, idx) => cleanCustomerName(t.customer_name, idx)))
-    ).filter(Boolean);
-    const options: DropdownOption[] = [{ value: "ALL", label: "Semua Customer" }];
-    unique.forEach((c) => options.push({ value: c, label: c }));
-    return options;
-  }, [allTransactions]);
-
-  const dynamicCabangOptions: DropdownOption[] = useMemo(() => {
-    const unique = Array.from(
-      new Set(allTransactions.map((t) => cleanBranchName(t.branch_code)))
-    ).filter(Boolean);
-    const options: DropdownOption[] = [{ value: "ALL", label: "Semua Cabang" }];
-    unique.forEach((r) => options.push({ value: r, label: r }));
-    return options;
-  }, [allTransactions]);
-
-  const handleApplyFilter = () => {
-    setIsFiltering(true);
-    setTimeout(() => {
-      let filtered = [...allTransactions];
-      if (periode !== "ALL") {
-        filtered = filtered.filter((t) => t.period_month === periode);
-      }
-      if (customer !== "ALL") {
-        filtered = filtered.filter((t) => t.customer_name === customer);
-      }
-      if (cabang !== "ALL") {
-        filtered = filtered.filter((t) => t.branch_code === cabang);
-      }
-      setFilteredTransactions(filtered);
-      setIsFiltering(false);
-    }, 200);
-  };
-
-  const kpiData = useMemo(() => {
-    const totalActual = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.actual_cost) || 0), 0);
-    const totalPlanned = filteredTransactions.reduce((acc, curr) => acc + (Number(curr.planned_cost) || 0), 0);
-    const totalVariance = totalActual - totalPlanned;
-
-    const variancePercentVal = totalPlanned > 0 ? ((totalVariance / totalPlanned) * 100).toFixed(1) : "0.0";
-    const realisasiPercentVal = totalPlanned > 0 ? ((totalActual / totalPlanned) * 100).toFixed(1) : "0.0";
-
-    const verifiedCount = filteredTransactions.filter((t) => t.has_evidence).length;
-    const totalCustomerCount = new Set(filteredTransactions.map((t) => t.customer_name).filter(Boolean)).size;
-
-    const attentionTransactions = filteredTransactions.filter(
-      (t) => t.status !== "Selesai" && (t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched)
-    );
-    const attentionCustomerCount = new Set(attentionTransactions.map((t) => t.customer_name).filter(Boolean)).size;
-
-    return {
-      totalActualDisplay: formatCompactRupiah(totalActual),
-      totalPlannedDisplay: formatCompactRupiah(totalPlanned),
-      totalVarianceDisplay: totalVariance >= 0 ? `+${formatCompactRupiah(totalVariance)}` : formatCompactRupiah(totalVariance),
-      variancePercent: Number(variancePercentVal) >= 0 ? `+${variancePercentVal}%` : `${variancePercentVal}%`,
-      varianceCardPercent: Number(variancePercentVal) >= 0 ? `+${variancePercentVal}%` : `${variancePercentVal}%`,
-      realisasiPercent: `${realisasiPercentVal}%`,
-      verifiedCountText: `${verifiedCount.toLocaleString("id-ID")} transaksi terverifikasi`,
-      totalCustomer: `${totalCustomerCount}`,
-      attentionCustomerText: `${attentionCustomerCount} customer perlu perhatian`,
-    };
-  }, [filteredTransactions]);
-
-  const hasUnreadNotif = useMemo(() => {
-    if (isNotifMarkedRead || dismissedNotifTags.length >= 4) return false;
-    return filteredTransactions.some(
-      (t) => t.status !== "Selesai" && (t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched)
-    );
-  }, [filteredTransactions, isNotifMarkedRead, dismissedNotifTags]);
-
-  const handleAsyncExport = () => {
-    setExportState("queueing");
-    const simulatedJobId = `EXP-${Date.now().toString().slice(-6)}`;
-    setExportJobId(simulatedJobId);
-    setTimeout(() => {
-      setExportState("ready");
-    }, 600);
-  };
-
-  const handleDownloadExcelFiles = async () => {
-    try {
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = "PT Andima Transportindo - CCR C2";
-      workbook.created = new Date();
-
-      const sheet1 = workbook.addWorksheet("Ringkasan Kinerja MtM");
-      sheet1.columns = [
-        { header: "Indikator KPI Eksekutif", key: "indikator", width: 32 },
-        { header: "Nilai Aktual / Status", key: "nilai", width: 28 },
-        { header: "Keterangan", key: "keterangan", width: 35 },
-      ];
-      sheet1.getRow(1).font = { bold: true };
-      sheet1.addRow({ indikator: "Periode Laporan", nilai: periode === "ALL" ? currentLivePeriod : periode, keterangan: "Periode evaluasi aktif" });
-      sheet1.addRow({ indikator: "Total Biaya Bulan Berjalan", nilai: kpiData.totalActualDisplay, keterangan: kpiData.verifiedCountText });
-      sheet1.addRow({ indikator: "Total Pagu Anggaran (Budget)", nilai: kpiData.totalPlannedDisplay, keterangan: `Realisasi ${kpiData.realisasiPercent}` });
-      sheet1.addRow({ indikator: "Deviasi / Variance MtM", nilai: kpiData.totalVarianceDisplay, keterangan: `Persentase deviasi ${kpiData.variancePercent}` });
-      sheet1.addRow({ indikator: "Total Entitas Pelanggan", nilai: kpiData.totalCustomer, keterangan: kpiData.attentionCustomerText });
-
-      const sheet2 = workbook.addWorksheet("Breakdown 51 Pelanggan");
-      sheet2.columns = [
-        { header: "ID Customer", key: "id", width: 16 },
-        { header: "Nama Pelanggan", key: "customer", width: 36 },
-        { header: "Trucking (Rp)", key: "trucking", width: 20 },
-        { header: "Handling (Rp)", key: "handling", width: 20 },
-        { header: "Storage (Rp)", key: "storage", width: 20 },
-        { header: "Total Akumulasi Biaya (Rp)", key: "total", width: 25 },
-      ];
-      sheet2.getRow(1).font = { bold: true };
-
-      const custMap = new Map<string, { trucking: number; handling: number; storage: number; total: number }>();
-      filteredTransactions.forEach((t, idx) => {
-        const name = cleanCustomerName(t.customer_name, idx);
-        const curr = custMap.get(name) || { trucking: 0, handling: 0, storage: 0, total: 0 };
-        const cat = (t.cost_category || "").toUpperCase();
-        const cost = Number(t.actual_cost || 0);
-
-        if (cat.includes("HANDL")) curr.handling += cost;
-        else if (cat.includes("STOR") || cat.includes("GUDANG")) curr.storage += cost;
-        else curr.trucking += cost;
-
-        curr.total += cost;
-        custMap.set(name, curr);
-      });
-
-      Array.from(custMap.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .forEach(([name, stat], index) => {
-          sheet2.addRow({
-            id: `CUST-${String(index + 1).padStart(4, "0")}`,
-            customer: name,
-            trucking: stat.trucking,
-            handling: stat.handling,
-            storage: stat.storage,
-            total: stat.total,
-          });
-        });
-
-      const sheet3 = workbook.addWorksheet("Transaksi Anomali");
-      sheet3.columns = [
-        { header: "No. Voucher", key: "voucher", width: 18 },
-        { header: "Job Number", key: "job", width: 18 },
-        { header: "Nama Customer", key: "customer", width: 32 },
-        { header: "Cabang", key: "branch", width: 18 },
-        { header: "Kategori", key: "category", width: 16 },
-        { header: "Budget (Rp)", key: "planned", width: 18 },
-        { header: "Aktual (Rp)", key: "actual", width: 18 },
-        { header: "Variance (Rp)", key: "variance", width: 18 },
-        { header: "Review Flag", key: "flag", width: 14 },
-        { header: "Tag Anomali", key: "tag", width: 24 },
-      ];
-      sheet3.getRow(1).font = { bold: true };
-
-      const anomalyRows = filteredTransactions.filter(
-        (t) => t.review_flag || t.variance > 0 || !t.has_evidence || !t.is_job_matched
-      );
-
-      anomalyRows.forEach((t, idx) => {
-        const isJobMissing = !t.is_job_matched || t.job_number === "UNMATCHED" || t.job_number === "-";
-        const isMissingEvidence = !t.has_evidence;
-        const isOverBudget = Number(t.variance || 0) > 0;
-
-        let primaryTag = "OVER_BUDGET";
-        let fillHex = "FFFEE2E2";
-
-        if (isJobMissing) {
-          primaryTag = "JOB_NOT_FOUND";
-          fillHex = "FFFFEDD5";
-        } else if (isMissingEvidence) {
-          primaryTag = "MISSING_EVIDENCE";
-          fillHex = "FFFEF3C7";
-        } else if (isOverBudget) {
-          primaryTag = "OVER_BUDGET";
-          fillHex = "FFFEE2E2";
-        }
-
-        const row = sheet3.addRow({
-          voucher: t.voucher_no,
-          job: t.job_number,
-          customer: cleanCustomerName(t.customer_name, idx),
-          branch: cleanBranchName(t.branch_code),
-          category: t.cost_category,
-          planned: Number(t.planned_cost || 0),
-          actual: Number(t.actual_cost || 0),
-          variance: Number(t.variance || 0),
-          flag: "YES",
-          tag: primaryTag,
-        });
-
-        row.eachCell((cell) => {
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: { argb: fillHex },
-          };
-        });
-      });
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `CCR_Dashboard_Report_${periode.replace(/\s+/g, "_")}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      setExportState("idle");
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const focused = rows.find((row) => row.customer_code === hovered);
 
   return (
-    <div className="flex min-h-screen w-full bg-[#f4f7fc]">
-      <Sidebar />
+    <Workspace
+      title="Dashboard"
+      description="Ringkasan biaya bulanan dari Company Sales Report. Seluruh nilai mengikuti nominal sumber."
+      action={
+        <Link href="/data-upload" className={buttonClass}>
+          Unggah Company Sales Report
+        </Link>
+      }
+    >
+      <Filters
+        {...filter}
+        onPeriod={filter.setPeriod}
+        company={company}
+        companies={all.data?.companies}
+        onCompany={setCompany}
+        refresh={() => {
+          filter.reload();
+          all.reload();
+          selected.reload();
+        }}
+      />
 
-      <main className="flex-1 min-w-0 px-8 py-6 lg:ml-[260px] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Monthly Cost Dashboard
-            </h1>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Ringkasan kinerja biaya bulanan dan anomali utama langsung dari database
-            </p>
+      <LoadState
+        loading={filter.loading || result.loading}
+        error={filter.error || result.error}
+        onRetry={result.reload}
+      />
+
+      {!filter.loading && !filter.period && !filter.error && (
+        <Notice>Belum ada periode biaya. Mulai dari Data Upload.</Notice>
+      )}
+
+      {data && (
+        <>
+          <div className="flex items-center gap-3 text-sm">
+            <Status validated={Boolean(data.validation?.is_validated)} />
+            <span className="font-medium text-slate-500">{filter.period}</span>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleAsyncExport}
-              disabled={exportState === "queueing"}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
-            >
-              {exportState === "queueing" ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />
+          <Kpis
+            items={[
+              { label: "Total Customer Aktif", value: number(data.kpis.total_customers) },
+              { label: "Total Sub Total Cost", value: money(data.kpis.total_sub_total) },
+              { label: "Total Tax Cost", value: money(data.kpis.total_tax), detail: "VAT + Cost PPh 23" },
+              { label: "Total Cost Bulanan", value: money(data.kpis.total_cost) },
+              { label: "Total Profit", value: money(data.kpis.total_profit) },
+            ]}
+          />
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <Card title="Company Cost Share (%)">
+              {positive ? (
+                <div className="flex flex-wrap items-center gap-6">
+                  <div
+                    role="img"
+                    aria-label="Distribusi total biaya perusahaan; nilai tersedia pada daftar di sebelah grafik"
+                    className="mx-auto flex h-52 w-52 shrink-0 items-center justify-center rounded-full"
+                    style={{ background: `conic-gradient(${slices.join(",")})` }}
+                  >
+                    <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full bg-white p-4 text-center shadow-inner">
+                      <span className="text-xs text-slate-500">{focused?.customer_code || "Total terpilih"}</span>
+                      <strong className="mt-1 text-sm font-bold text-slate-800">
+                        {money(focused?.sum_total_cost ?? chartTotal)}
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="max-h-72 min-w-44 flex-1 space-y-2 overflow-y-auto pr-1">
+                    {rows.map((row, index) => (
+                      <button
+                        type="button"
+                        key={row.customer_code}
+                        onMouseEnter={() => setHovered(row.customer_code)}
+                        onFocus={() => setHovered(row.customer_code)}
+                        onMouseLeave={() => setHovered(null)}
+                        onBlur={() => setHovered(null)}
+                        onClick={() => setCompany(row.company_name)}
+                        className={`flex w-full items-start gap-2 rounded p-1.5 text-left text-xs transition-colors hover:bg-sky-50 ${
+                          hovered === row.customer_code ? "bg-sky-50 ring-1 ring-sky-300" : ""
+                        }`}
+                      >
+                        <span
+                          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ background: colors[index % colors.length] }}
+                        />
+                        <span className="flex-1 truncate font-medium text-slate-700">{row.company_name}</span>
+                        <strong className="text-slate-900">{number(row.company_share_pct)}%</strong>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ) : (
-                <Download className="h-3.5 w-3.5 text-slate-600" />
+                <p className="py-12 text-center text-sm text-slate-500">
+                  Grafik porsi tersedia untuk total biaya positif tanpa komponen negatif. Nilai sumber tetap tersedia dalam tabel.
+                </p>
               )}
-              <span>Ekspor Ringkasan</span>
-            </button>
+              <p className="mt-4 text-xs text-slate-400">
+                Persentase menggunakan total seluruh perusahaan pada periode. Area abu-abu adalah porsi perusahaan di luar filter. Pilih nama perusahaan untuk memfilter.
+              </p>
+            </Card>
 
-            <button
-              onClick={fetchSupabaseData}
-              disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 text-slate-600 ${isSyncing ? "animate-spin" : ""}`} />
-              <span>Sinkronkan Supabase</span>
-            </button>
+            <Card title="Breakdown Cost per Customer">
+              <div className="max-h-80 space-y-3.5 overflow-y-auto pr-1">
+                {rows.map((row) => {
+                  const costVal = amount(row.sum_total_cost);
+                  const barWidth = Math.min(100, Math.max(2, (Math.abs(costVal) / maximum) * 100));
 
-            <div className="relative">
-              <button
-                aria-label="Lihat Notifikasi"
-                onClick={() => setIsNotificationOpen(!isNotificationOpen)}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50 ${
-                  isNotificationOpen ? "ring-2 ring-[#0a7ebf]" : ""
-                }`}
-              >
-                <Bell className="h-4 w-4" />
-                {hasUnreadNotif && (
-                  <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                  return (
+                    <Link
+                      key={row.customer_code}
+                      href={query("/customer-cost", { period: filter.period, company: row.company_name })}
+                      className="group block rounded p-1.5 transition-colors hover:bg-sky-50"
+                    >
+                      <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
+                        <span className="truncate font-medium text-slate-700 group-hover:text-sky-700">
+                          {row.company_name}
+                        </span>
+                        <strong className="shrink-0 text-slate-900">{money(row.sum_total_cost)}</strong>
+                      </div>
+                      <div className="h-3 w-full rounded-full bg-slate-100 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-300 ${
+                            costVal < 0 ? "bg-rose-500" : "bg-sky-600"
+                          }`}
+                          style={{ width: `${barWidth}%` }}
+                        />
+                      </div>
+                    </Link>
+                  );
+                })}
+
+                {!rows.length && (
+                  <p className="py-10 text-center text-sm text-slate-500">Belum ada rincian biaya.</p>
                 )}
-              </button>
-
-              <NotificationPopover
-                isOpen={isNotificationOpen}
-                onClose={() => setIsNotificationOpen(false)}
-                transactions={filteredTransactions}
-                periode={currentLivePeriod}
-                isMarkedAllRead={isNotifMarkedRead}
-                dismissedTags={dismissedNotifTags}
-                onToggleMarkAllRead={handleToggleMarkAllRead}
-                onNavigateException={handleNavigateException}
-              />
-            </div>
-
-            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e0f2fe] px-3 py-1.5 text-xs font-semibold text-[#0284c7]">
-              <CalendarDays className="h-3.5 w-3.5 text-[#0284c7]" />
-              {currentLivePeriod}
-            </span>
-          </div>
-        </div>
-
-        {exportState === "ready" && (
-          <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 shadow-sm animate-in fade-in">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-              <span className="text-xs font-semibold text-emerald-900">
-                Laporan Ringkasan Biaya (#{exportJobId}) siap diunduh.
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleDownloadExcelFiles}
-                className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow hover:bg-emerald-700 transition"
-              >
-                Unduh .xlsx
-              </button>
-              <button
-                onClick={() => setExportState("idle")}
-                className="rounded p-1 text-emerald-700 hover:bg-emerald-100"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="mt-5 flex flex-wrap items-end gap-3">
-          <div className="w-52">
-            <CustomDropdown
-              label="Periode"
-              value={periode}
-              options={dynamicPeriodeOptions}
-              onChange={setPeriode}
-            />
-          </div>
-
-          <div className="w-64">
-            <CustomDropdown
-              label="Customer"
-              value={customer}
-              options={dynamicCustomerOptions}
-              onChange={setCustomer}
-            />
-          </div>
-
-          <div className="w-56">
-            <CustomDropdown
-              label="Cabang Operasional"
-              value={cabang}
-              options={dynamicCabangOptions}
-              onChange={setCabang}
-            />
-          </div>
-
-          <button
-            onClick={handleApplyFilter}
-            disabled={isFiltering}
-            className="inline-flex h-[38px] items-center justify-center gap-2 rounded-lg bg-[#0a7ebf] px-5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#08689d] active:scale-95 disabled:opacity-75"
-          >
-            {isFiltering ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-            )}
-            <span>Terapkan Filter</span>
-          </button>
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {isLoading ? (
-            <>
-              <KpiSkeletonCard />
-              <KpiSkeletonCard />
-              <KpiSkeletonCard />
-              <KpiSkeletonCard />
-            </>
-          ) : (
-            <>
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    TOTAL COST
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#e0f2fe] text-[#0a7ebf]">
-                    <CreditCard className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <h2 className="text-xl font-bold text-slate-900">
-                    {kpiData.totalActualDisplay}
-                  </h2>
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-[#ffe4e6] text-[#e11d48]">
-                    {kpiData.variancePercent}
-                  </span>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  {kpiData.verifiedCountText}
-                </p>
               </div>
-
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    BUDGET
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#dcfce7] text-[#16a34a]">
-                    <Landmark className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <h2 className="text-xl font-bold text-slate-900">
-                    {kpiData.totalPlannedDisplay}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  Realisasi {kpiData.realisasiPercent}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    VARIANCE
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#ffe4e6] text-[#e11d48]">
-                    <TrendingUp className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <h2 className="text-xl font-bold text-slate-900">
-                    {kpiData.totalVarianceDisplay}
-                  </h2>
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-bold bg-[#ffe4e6] text-[#e11d48]">
-                    {kpiData.varianceCardPercent}
-                  </span>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  Di atas budget bulan ini
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between">
-                  <span className="text-[11px] font-bold tracking-wider text-slate-400">
-                    TOTAL CUSTOMER
-                  </span>
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#fef3c7] text-[#d97706]">
-                    <Users className="h-4 w-4" />
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <h2 className="text-xl font-bold text-slate-900">
-                    {kpiData.totalCustomer}
-                  </h2>
-                </div>
-                <p className="mt-2 text-[11px] text-slate-400">
-                  {kpiData.attentionCustomerText}
-                </p>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-          <div className="xl:col-span-7">
-            {isLoading ? (
-              <SectionSkeletonCard height="h-80" />
-            ) : (
-              <BudgetChart transactions={filteredTransactions} />
-            )}
+            </Card>
           </div>
-          <div className="xl:col-span-5">
-            {isLoading ? (
-              <SectionSkeletonCard height="h-80" />
-            ) : (
-              <CustomerBreakdown transactions={filteredTransactions} />
-            )}
-          </div>
-        </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-          <div className="xl:col-span-7">
-            {isLoading ? (
-              <SectionSkeletonCard height="h-72" />
-            ) : (
-              <ExceptionSummary
-                transactions={filteredTransactions}
-                activeCustomer={customer}
-                activeBranch={cabang}
-                activePeriod={periode}
-              />
-            )}
-          </div>
-          <div className="xl:col-span-5">
-            {isLoading ? (
-              <SectionSkeletonCard height="h-72" />
-            ) : (
-              <DataHealth transactions={filteredTransactions} />
-            )}
-          </div>
-        </div>
-      </main>
-    </div>
+          <Card title="Ringkasan perusahaan">
+            <SummaryTable rows={rows} />
+          </Card>
+        </>
+      )}
+    </Workspace>
   );
 }

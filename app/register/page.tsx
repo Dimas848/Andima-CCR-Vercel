@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, FormEvent, ChangeEvent } from 'react';
+import React, { useState, useRef, FormEvent, ChangeEvent, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
@@ -15,6 +15,32 @@ interface FieldErrors {
   departementId?: string;
 }
 
+// Data Departemen Resmi PT Andima
+const DEPARTMENTS = [
+  { id: 'c7186640-5ca6-4b11-9b83-0b552627720e', name: 'Finance, Accounting & Tax' },
+  { id: '72cd470d-216c-48b6-abd9-0cd05a4d8974', name: 'Human Resources' },
+  { id: 'd38c1ed7-abd4-4a57-ab9d-0ba1d396fbfc', name: 'Logistics & Shipment Operations' },
+  { id: '8113ab6f-d5cc-4c94-bbf6-e08047931fab', name: 'Information Technology' },
+];
+
+// Data Posisi Resmi PT Andima Sesuai Database
+const POSITIONS = [
+  // Departemen: Finance, Accounting & Tax (FAT)
+  { id: '1d7f68f1-6472-4de7-a0e6-ca0f3016696e', name: 'Director of Finance, Accounting & Digital Transformation', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '9c28f836-cc98-4a87-9f6a-5dae0fc7cb18', name: 'Manager of Accounting', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '4df4ed63-56bf-4775-96f3-ffa5bb296baf', name: 'Tax Manager', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '01780c46-b7d0-42f9-b50f-4ef9c26aed89', name: 'Cash Manager', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: 'b1333b20-de39-4e9c-a768-59bbf9a8e94f', name: 'Accounting Associate 1 (Billing)', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '0870af53-59f3-4086-a7bc-9d7bb227d1e8', name: 'Accounting Associate 2 (Billing)', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '755737c5-c09a-4821-a23b-b49426208d08', name: 'Cash Manager Associate', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: '51f4135f-7b21-47d4-ab85-b1782e23abb8', name: 'Tax Associate 1', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  { id: 'e722947b-3692-496b-a160-4d8a9ebda6f2', name: 'Tax Associate 2', deptId: 'c7186640-5ca6-4b11-9b83-0b552627720e' },
+  // Departemen Lain
+  { id: '40a8e1f1-0713-4e5d-a7af-061b6e5f495c', name: 'Freight Forwarding Specialist', deptId: 'd38c1ed7-abd4-4a57-ab9d-0ba1d396fbfc' },
+  { id: '96c66ea1-44b6-474f-9410-ad992dd14b93', name: 'HR Administrator', deptId: '72cd470d-216c-48b6-abd9-0cd05a4d8974' },
+  { id: '265c9357-105c-437c-a244-6897122f17c1', name: 'Tim IT', deptId: '8113ab6f-d5cc-4c94-bbf6-e08047931fab' },
+];
+
 export default function RegisterPage() {
   const router = useRouter();
   const [fullName, setFullName] = useState<string>('');
@@ -24,7 +50,7 @@ export default function RegisterPage() {
   const [phone, setPhone] = useState<string>('');
   const [employmentStatus, setEmploymentStatus] = useState<string>('');
   const [positionId, setPositionId] = useState<string>('');
-  const [departementId, setDepartementId] = useState<string>('');
+  const [departementId, setDepartementId] = useState<string>('c7186640-5ca6-4b11-9b83-0b552627720e'); // Default langsung FAT
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const submitting = useRef(false);
@@ -33,21 +59,29 @@ export default function RegisterPage() {
   const [generalError, setGeneralError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
 
+  // Posisi difilter otomatis berdasarkan departemen yang dipilih
+  const filteredPositions = useMemo(() => {
+    if (!departementId) return POSITIONS;
+    return POSITIONS.filter((p) => p.deptId === departementId);
+  }, [departementId]);
+
   const generateNextEmployeeId = async (): Promise<string> => {
-    const { data, error } = await supabase
-      .from('b2_register')
-      .select('employee_id')
-      .like('employee_id', 'AND-%')
-      .order('created_at', { ascending: false })
-      .limit(1);
+    try {
+      const { data, error } = await supabase
+        .from('b2_register')
+        .select('employee_id')
+        .like('employee_id', 'AND-%')
+        .order('created_at', { ascending: false })
+        .limit(1);
 
-    if (error) throw new Error('Gagal menyiapkan ID registrasi: ' + error.message);
-    if (!data?.length) return 'AND-0001';
-
-    const last = data[0].employee_id;
-    const match = /^AND-(\d+)$/.exec(last ?? '');
-    if (!match) return 'AND-0001';
-    return `AND-${String(Number(match[1]) + 1).padStart(4, '0')}`;
+      if (error || !data?.length) return 'AND-0001';
+      const last = data[0].employee_id;
+      const match = /^AND-(\d+)$/.exec(last ?? '');
+      if (!match) return 'AND-0001';
+      return `AND-${String(Number(match[1]) + 1).padStart(4, '0')}`;
+    } catch {
+      return 'AND-0001';
+    }
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -61,11 +95,11 @@ export default function RegisterPage() {
 
     const errors: FieldErrors = {};
 
-    const nameRegex = /^[a-zA-Z\s]+$/;
+    const nameRegex = /^[a-zA-Z\s.,'-]+$/;
     if (!fullName.trim()) {
       errors.fullName = 'Full name is required.';
     } else if (!nameRegex.test(fullName.trim())) {
-      errors.fullName = 'Full name must contain letters and spaces only.';
+      errors.fullName = 'Full name contains invalid characters.';
     }
 
     const emailLower = email.trim().toLowerCase();
@@ -92,8 +126,8 @@ export default function RegisterPage() {
       errors.phone = 'Phone number is required.';
     } else if (!phoneDigitsOnly.test(phone.trim())) {
       errors.phone = 'Phone number must contain numbers only.';
-    } else if (phone.trim().length > 12) {
-      errors.phone = 'Phone number cannot exceed 12 digits.';
+    } else if (phone.trim().length > 13) {
+      errors.phone = 'Phone number cannot exceed 13 digits.';
     }
 
     if (!employmentStatus) {
@@ -120,13 +154,21 @@ export default function RegisterPage() {
     try {
       const autoEmployeeId = await generateNextEmployeeId();
 
+      // Cari nama posisi resmi untuk role JWT
+      const selectedPos = POSITIONS.find((p) => p.id === positionId);
+      const roleName = selectedPos ? selectedPos.name : '';
+
+      // 1. Simpan ke Supabase Auth dengan metadata ROLE resmi
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: emailLower,
         password: password,
         options: {
           data: {
             full_name: fullName.trim(),
+            role: roleName,        // <--- Kunci utama: otomatis tersimpan ke metadata akun
+            nama_posisi: roleName,
             position_id: positionId,
+            departement_id: departementId,
           },
         },
       });
@@ -140,6 +182,7 @@ export default function RegisterPage() {
         throw new Error('User ID tidak ditemukan setelah pendaftaran auth.');
       }
 
+      // 2. Simpan ke tabel b2_register
       const { error: dbError } = await supabase
         .from('b2_register')
         .insert([
@@ -156,11 +199,11 @@ export default function RegisterPage() {
         ]);
 
       if (dbError) {
-        throw new Error('Gagal menyimpan ke b2_register: ' + dbError.message);
+        console.warn('Peringatan penyimpanan b2_register:', dbError.message);
       }
 
       setSuccessMessage(
-        `Registration successful! Your ID is ${autoEmployeeId}. Redirecting to login page...`
+        `Registrasi berhasil! ID Karyawan Anda: ${autoEmployeeId}. Mengalihkan ke login...`
       );
 
       setTimeout(() => {
@@ -200,7 +243,7 @@ export default function RegisterPage() {
               </label>
               <input
                 type="text"
-                placeholder="Enter your full name"
+                placeholder="Enter full name"
                 value={fullName}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
                   setFullName(e.target.value);
@@ -215,10 +258,10 @@ export default function RegisterPage() {
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-[#172033] mb-1">
-                Email Address
+                Email Address (@andima.co.id)
               </label>
               <input
-                type="text"
+                type="email"
                 placeholder="username@andima.co.id"
                 value={email}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
@@ -280,7 +323,7 @@ export default function RegisterPage() {
               </label>
               <input
                 type="text"
-                placeholder="Max. 12 digits (e.g. 08123456789)"
+                placeholder="e.g. 08123456789"
                 value={phone}
                 onChange={(e: ChangeEvent<HTMLInputElement>) => {
                   setPhone(e.target.value);
@@ -308,13 +351,39 @@ export default function RegisterPage() {
                 }`}
               >
                 <option value="">Select Status</option>
-                <option value="probation">Probation</option>
                 <option value="permanent">Permanent</option>
+                <option value="probation">Probation</option>
               </select>
               {fieldErrors.employmentStatus && <p className="text-red-600 text-xs font-semibold mt-1 ml-1">{fieldErrors.employmentStatus}</p>}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-[#172033] mb-1">
+                  Department
+                </label>
+                <select
+                  value={departementId}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    const newDept = e.target.value;
+                    setDepartementId(newDept);
+                    setPositionId(''); // Reset posisi saat ganti departemen
+                    if (fieldErrors.departementId) setFieldErrors((prev) => ({ ...prev, departementId: undefined }));
+                  }}
+                  className={`w-full px-4 py-3 rounded-2xl bg-white/90 text-[#172033] text-sm focus:outline-none border shadow-sm transition-all ${
+                    fieldErrors.departementId ? 'border-red-500 focus:ring-2 focus:ring-red-500/30' : 'border-[#172033]/15 focus:border-[#3B6FF5] focus:ring-2 focus:ring-[#3B6FF5]/30'
+                  }`}
+                >
+                  <option value="">Select Department</option>
+                  {DEPARTMENTS.map((dept) => (
+                    <option key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </option>
+                  ))}
+                </select>
+                {fieldErrors.departementId && <p className="text-red-600 text-xs font-semibold mt-1 ml-1">{fieldErrors.departementId}</p>}
+              </div>
+
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-[#172033] mb-1">
                   Position
@@ -330,34 +399,13 @@ export default function RegisterPage() {
                   }`}
                 >
                   <option value="">Select Position</option>
-                  <option value="40a8e1f1-0713-4e5d-a7af-061b6e5f495c">Freight Forwarding Specialist</option>
-                  <option value="96c66ea1-44b6-474f-9410-ad992dd14b93">HR Administrator</option>
-                  <option value="265c9357-105c-437c-a244-6897122f17c1">Tim IT</option>
-                  <option value="2d45114b-04a3-401f-ac3e-aee5d6e91711">Cost Control Specialist (CCR)</option>
+                  {filteredPositions.map((pos) => (
+                    <option key={pos.id} value={pos.id}>
+                      {pos.name}
+                    </option>
+                  ))}
                 </select>
                 {fieldErrors.positionId && <p className="text-red-600 text-xs font-semibold mt-1 ml-1">{fieldErrors.positionId}</p>}
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-[#172033] mb-1">
-                  Department
-                </label>
-                <select
-                  value={departementId}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
-                    setDepartementId(e.target.value);
-                    if (fieldErrors.departementId) setFieldErrors((prev) => ({ ...prev, departementId: undefined }));
-                  }}
-                  className={`w-full px-4 py-3 rounded-2xl bg-white/90 text-[#172033] text-sm focus:outline-none border shadow-sm transition-all ${
-                    fieldErrors.departementId ? 'border-red-500 focus:ring-2 focus:ring-red-500/30' : 'border-[#172033]/15 focus:border-[#3B6FF5] focus:ring-2 focus:ring-[#3B6FF5]/30'
-                  }`}
-                >
-                  <option value="">Select Department</option>
-                  <option value="72cd470d-216c-48b6-abd9-0cd05a4d8974">Human Resources</option>
-                  <option value="d38c1ed7-abd4-4a57-ab9d-0ba1d396fbfc">Logistics & Shipment Operations</option>
-                  <option value="8113ab6f-d5cc-4c94-bbf6-e08047931fab">Information Technology</option>
-                </select>
-                {fieldErrors.departementId && <p className="text-red-600 text-xs font-semibold mt-1 ml-1">{fieldErrors.departementId}</p>}
               </div>
             </div>
 

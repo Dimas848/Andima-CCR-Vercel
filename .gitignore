@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local preservation copies, extracted references, and offline test output
+/.c2-local-backup/
+/test-results/

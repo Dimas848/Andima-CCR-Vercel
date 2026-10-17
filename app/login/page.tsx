@@ -5,14 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 
-const REGISTERED_USERS = {
-  'manajemen@andima.co.id': {
-    passwordRole: 'Manajemen123!@#',
-    role: 'Manajemen',
-    redirectTo: '/dashboard/manajemen',
-  },
-};
-
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState<string>('');
@@ -50,13 +42,6 @@ export default function LoginPage() {
   const validateEmailFormat = (emailVal: string): boolean => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(emailVal);
-  };
-
-  const validatePasswordStrength = (passVal: string): boolean => {
-    const hasLetter = /[a-zA-Z]/.test(passVal);
-    const hasDigit = /\d/.test(passVal);
-    const hasSpecial = /[^a-zA-Z0-9]/.test(passVal);
-    return passVal.length >= 10 && hasLetter && hasDigit && hasSpecial;
   };
 
   const handleFailedAttempt = (customMessage: string) => {
@@ -99,38 +84,32 @@ export default function LoginPage() {
       return;
     }
 
-    if (!validatePasswordStrength(password)) {
-      setErrorMessage(
-        'Password must be at least 10 characters long and contain a mix of letters, numbers, and special characters.'
-      );
-      return;
-    }
-
-    const userAccount = REGISTERED_USERS[email.toLowerCase() as keyof typeof REGISTERED_USERS];
-    if (userAccount && userAccount.passwordRole === password) {
-      setLoginAttempts(0);
-      setSuccessMessage(`Login successful! Redirecting to ${userAccount.role} Dashboard...`);
-      window.setTimeout(() => { router.push(userAccount.redirectTo); }, 1500);
-      return;
-    }
-
     setIsSigningIn(true);
-    void supabase.auth.signInWithPassword({ email: email.toLowerCase().trim(), password })
-      .then(({ error }) => {
-        if (error) {
-          const message = error.message.toLowerCase().includes('email not confirmed')
-            ? 'Email belum dikonfirmasi. Selesaikan konfirmasi melalui email terlebih dahulu.'
-            : 'Email atau password salah.';
-          handleFailedAttempt(message);
-          return;
-        }
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.toLowerCase().trim(),
+        password,
+      });
 
-        setLoginAttempts(0);
-        setSuccessMessage('Login berhasil! Mengalihkan ke dashboard...');
-        window.setTimeout(() => { router.push('/dashboard'); }, 1200);
-      })
-      .catch(() => setErrorMessage('Tidak dapat menghubungi server login. Silakan coba lagi.'))
-      .finally(() => setIsSigningIn(false));
+      if (error) {
+        const message = error.message.toLowerCase().includes('email not confirmed')
+          ? 'Email belum dikonfirmasi. Selesaikan konfirmasi melalui email terlebih dahulu.'
+          : 'Email atau password salah.';
+        handleFailedAttempt(message);
+        return;
+      }
+
+      setLoginAttempts(0);
+      setSuccessMessage('Login berhasil! Mengalihkan ke dashboard...');
+      router.refresh();
+      window.setTimeout(() => {
+        router.push('/dashboard');
+      }, 1000);
+    } catch {
+      setErrorMessage('Tidak dapat menghubungi server login. Silakan coba lagi.');
+    } finally {
+      setIsSigningIn(false);
+    }
   };
 
   return (
@@ -148,7 +127,7 @@ export default function LoginPage() {
       <div className="absolute -top-20 -left-20 w-96 h-96 bg-[#18C7C0]/30 rounded-full blur-3xl pointer-events-none z-0" />
       <div className="absolute -bottom-20 left-1/3 w-96 h-96 bg-[#3B6FF5]/30 rounded-full blur-3xl pointer-events-none z-0" />
 
-      {/* ===== BAGIAN KANAN: LOGO MENGGANTIKAN IKON KOTAK BIRU ===== */}
+      {/* Bagian Kanan Logo */}
       <div className="hidden md:flex absolute top-1/2 -translate-y-1/2 right-8 lg:right-16 xl:right-24 z-20 pointer-events-none flex-col items-end text-right max-w-lg">
         <img
           src="/Logo Andima.png"
@@ -157,7 +136,9 @@ export default function LoginPage() {
         />
         <h1 className="font-[family-name:var(--font-syne)] text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-wider text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.9)] leading-tight">
           PT. ANDIMA<br />
-          <span className="font-[family-name:var(--font-syne)] text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-wider text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.9)] leading-tight">TRANSPORTINDO</span>
+          <span className="font-[family-name:var(--font-syne)] text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-wider text-white drop-shadow-[0_4px_20px_rgba(0,0,0,0.9)] leading-tight">
+            TRANSPORTINDO
+          </span>
         </h1>
       </div>
 
@@ -178,7 +159,7 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="space-y-6 font-[family-name:var(--font-montserrat)] relative z-10" noValidate>
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wider text-[#0F172A] mb-2.5">
-                  Username
+                  Username / Email
                 </label>
                 <input
                   type="email"
@@ -213,7 +194,7 @@ export default function LoginPage() {
                     onTouchEnd={() => setShowPassword(false)}
                     disabled={isLocked || isPermanentlyBlocked}
                     tabIndex={-1}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#3B6FF5] p-1 transition-colors disabled:opacity-50"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-[#64748B] hover:text-[#3B6FF5] p-1 transition-colors disabled:opacity-50 cursor-pointer"
                   >
                     {showPassword ? (
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -256,13 +237,17 @@ export default function LoginPage() {
                   ? 'ACCOUNT BLOCKED'
                   : isLocked
                   ? `Please wait ${countdown}s`
-                  : isSigningIn ? 'SIGNING IN…' : 'LOGIN'}
+                  : isSigningIn
+                  ? 'SIGNING IN…'
+                  : 'LOGIN'}
               </button>
             </form>
 
             <p className="relative z-10 mt-4 text-center text-sm text-[#334155]">
               Not registered yet?{' '}
-              <Link href="/register" className="font-bold text-[#3B6FF5] hover:underline">Register</Link>
+              <Link href="/register" className="font-bold text-[#3B6FF5] hover:underline">
+                Register
+              </Link>
             </p>
           </div>
         </div>
