@@ -60,7 +60,7 @@ export default function DashboardPage() {
 
   const result = company === "ALL" ? all : selected;
   const data = result.data;
-  const rows = data?.companies ?? [];
+  const rows = useMemo(() => data?.companies ?? [], [data?.companies]);
 
   const chartTotal = useMemo(
     () => rows.reduce((sum, row) => sum + amount(row.sum_total_cost), 0),

@@ -309,7 +309,7 @@ export const periods = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
 
-  let rows = await allRows((start, end) =>
+const rows = await allRows((start, end) =>
     db.from("vw_c2_company_monthly_summary_v2").select("periode,customer_code").order("periode").order("customer_code").range(start, end)
   );
 
