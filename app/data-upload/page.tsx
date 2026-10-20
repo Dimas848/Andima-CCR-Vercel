@@ -83,6 +83,39 @@ interface Draft {
   warnings: string[];
 }
 
+// Komponen Skeleton Loading untuk halaman Data Upload
+function DataUploadSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6">
+      {/* Kartu Periode & Dokumen Sumber Skeleton */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div className="space-y-2">
+            <div className="h-3.5 w-48 rounded bg-slate-200" />
+            <div className="h-10 w-48 rounded bg-slate-200" />
+          </div>
+          <div className="space-y-2">
+            <div className="h-4 w-32 rounded bg-slate-200" />
+            <div className="h-5 w-20 rounded bg-slate-200" />
+          </div>
+        </div>
+        <div className="rounded-xl border-2 border-dashed border-slate-200 p-8 flex flex-col items-center justify-center space-y-3">
+          <div className="h-9 w-9 rounded-full bg-slate-200" />
+          <div className="h-4 w-56 rounded bg-slate-200" />
+          <div className="h-3 w-40 rounded bg-slate-200" />
+          <div className="h-9 w-28 rounded bg-slate-200 mt-2" />
+        </div>
+      </div>
+
+      {/* Riwayat Unggahan Skeleton */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+        <div className="h-4 w-40 rounded bg-slate-200" />
+        <div className="h-28 w-full rounded bg-slate-100" />
+      </div>
+    </div>
+  );
+}
+
 export default function DataUploadPage() {
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
@@ -196,6 +229,8 @@ export default function DataUploadPage() {
     }
   }
 
+  const isLoading = filter.loading || status.loading || user.loading;
+
   return (
     <Workspace
       title="Data Upload"
@@ -216,197 +251,203 @@ export default function DataUploadPage() {
         }}
       />
 
-      <Card title="Periode dan dokumen sumber">
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-          <label className="text-xs font-semibold text-slate-600">
-            Periode baru (bila belum ada pada daftar)
-            <input
-              type="month"
-              value={currentMonthValue}
-              className={`${fieldClass} mt-1.5`}
-              disabled={busy}
-              onChange={(event) => {
-                if (event.target.value) changePeriod(event.target.value);
-              }}
-            />
-          </label>
-          <div className="text-sm text-slate-500">
-            {user.data && (
-              <p>
-                {user.data.name} · {user.data.role}
-              </p>
-            )}
-            {status.data && (
-              <div className="mt-2">
-                <Status validated={locked} />
-              </div>
-            )}
-          </div>
-        </div>
+      <LoadState
+        loading={isLoading}
+        error={filter.error || status.error || user.error}
+        onRetry={() => {
+          status.reload();
+          user.reload();
+        }}
+      />
 
-        <LoadState
-          loading={filter.loading || status.loading || user.loading}
-          error={filter.error || status.error || user.error}
-          onRetry={() => {
-            status.reload();
-            user.reload();
-          }}
-        />
-
-        {locked && (
-          <Notice>
-            Periode ini telah divalidasi. Unggahan baru tidak dapat disimpan
-            pada periode terkunci.
-          </Notice>
-        )}
-
-        <div
-          onDragOver={(event) => {
-            event.preventDefault();
-            if (!disabled) setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            if (event.dataTransfer.files.length > 1) {
-              setError("Unggah satu berkas setiap kali.");
-            } else {
-              void preview(event.dataTransfer.files[0]);
-            }
-          }}
-          className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
-            dragging
-              ? "border-sky-600 bg-sky-100"
-              : "border-slate-300 bg-slate-50"
-          }`}
-        >
-          <UploadCloud className="mx-auto mb-3 text-sky-700" size={36} />
-          <p className="font-semibold text-slate-800">
-            Tarik berkas Company Sales Report ke sini
-          </p>
-          <p className="mb-4 mt-2 text-sm text-slate-500">
-            CSV atau XLSX · maksimal 25 MB · pilih periode terlebih dahulu
-          </p>
-          <input
-            ref={input}
-            type="file"
-            className="sr-only"
-            accept=".csv,.xlsx"
-            aria-label="Pilih Company Sales Report"
-            disabled={disabled}
-            onChange={(event) => void preview(event.target.files?.[0])}
-          />
-          <button
-            type="button"
-            className={buttonClass}
-            disabled={disabled}
-            onClick={() => input.current?.click()}
-          >
-            {busy ? "Memproses…" : "Pilih berkas"}
-          </button>
-          {fileName && (
-            <p className="mt-3 break-all text-sm font-medium text-slate-700">
-              {fileName}
-            </p>
-          )}
-        </div>
-        <p className="mt-4 text-xs leading-relaxed text-slate-500">
-          Kolom wajib: Periode, Job Number, Company, MAWB No., CW, DEST, Invoice
-          Nominal, Sub Total, VAT, Cost PPH 23, Others, DIP IATA, Total Cost,
-          dan Profit.
-        </p>
-      </Card>
-
-      {error && <Notice error>{error}</Notice>}
-      {notice && <Notice>{notice}</Notice>}
-
-      {draft && (
+      {isLoading ? (
+        <DataUploadSkeleton />
+      ) : (
         <>
-          <Kpis
-            items={[
-              {
-                label: "Baris valid",
-                value: number(draft.records.length),
-              },
-              {
-                label: "Total perusahaan",
-                value: number(
-                  new Set(draft.records.map((row) => row.company_name)).size
-                ),
-              },
-              {
-                label: "Total Cost",
-                value: money(
-                  draft.records.reduce(
-                    (sum, row) => sum + amount(row.total_cost),
-                    0
-                  )
-                ),
-              },
-            ]}
-          />
-          {draft.warnings?.map((warning, index) => (
-            <Notice key={index}>{warning}</Notice>
-          ))}
-          <Card
-            title={`Pratinjau 14 kolom · ${draft.period}`}
-            action={
+          <Card title="Periode dan dokumen sumber">
+            <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+              <label className="text-xs font-semibold text-slate-600">
+                Periode baru (bila belum ada pada daftar)
+                <input
+                  type="month"
+                  value={currentMonthValue}
+                  className={`${fieldClass} mt-1.5`}
+                  disabled={busy}
+                  onChange={(event) => {
+                    if (event.target.value) changePeriod(event.target.value);
+                  }}
+                />
+              </label>
+              <div className="text-sm text-slate-500">
+                {user.data && (
+                  <p>
+                    {user.data.name} · {user.data.role}
+                  </p>
+                )}
+                {status.data && (
+                  <div className="mt-2">
+                    <Status validated={locked} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {locked && (
+              <Notice>
+                Periode ini telah divalidasi. Unggahan baru tidak dapat disimpan
+                pada periode terkunci.
+              </Notice>
+            )}
+
+            <div
+              onDragOver={(event) => {
+                event.preventDefault();
+                if (!disabled) setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragging(false);
+                if (event.dataTransfer.files.length > 1) {
+                  setError("Unggah satu berkas setiap kali.");
+                } else {
+                  void preview(event.dataTransfer.files[0]);
+                }
+              }}
+              className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+                dragging
+                  ? "border-sky-600 bg-sky-100"
+                  : "border-slate-300 bg-slate-50"
+              }`}
+            >
+              <UploadCloud className="mx-auto mb-3 text-sky-700" size={36} />
+              <p className="font-semibold text-slate-800">
+                Tarik berkas Company Sales Report ke sini
+              </p>
+              <p className="mb-4 mt-2 text-sm text-slate-500">
+                CSV atau XLSX · maksimal 25 MB · pilih periode terlebih dahulu
+              </p>
+              <input
+                ref={input}
+                type="file"
+                className="sr-only"
+                accept=".csv,.xlsx"
+                aria-label="Pilih Company Sales Report"
+                disabled={disabled}
+                onChange={(event) => void preview(event.target.files?.[0])}
+              />
               <button
                 type="button"
                 className={buttonClass}
-                disabled={busy || locked}
-                onClick={() => setConfirm(true)}
+                disabled={disabled}
+                onClick={() => input.current?.click()}
               >
-                Konfirmasi penyimpanan
+                {busy ? "Memproses…" : "Pilih berkas"}
               </button>
-            }
-          >
-            <SalesTable records={draft.records} />
+              {fileName && (
+                <p className="mt-3 break-all text-sm font-medium text-slate-700">
+                  {fileName}
+                </p>
+              )}
+            </div>
+            <p className="mt-4 text-xs leading-relaxed text-slate-500">
+              Kolom wajib: Periode, Job Number, Company, MAWB No., CW, DEST, Invoice
+              Nominal, Sub Total, VAT, Cost PPH 23, Others, DIP IATA, Total Cost,
+              dan Profit.
+            </p>
           </Card>
+
+          {error && <Notice error>{error}</Notice>}
+          {notice && <Notice>{notice}</Notice>}
+
+          {draft && (
+            <>
+              <Kpis
+                items={[
+                  {
+                    label: "Baris valid",
+                    value: number(draft.records.length),
+                  },
+                  {
+                    label: "Total perusahaan",
+                    value: number(
+                      new Set(draft.records.map((row) => row.company_name)).size
+                    ),
+                  },
+                  {
+                    label: "Total Cost",
+                    value: money(
+                      draft.records.reduce(
+                        (sum, row) => sum + amount(row.total_cost),
+                        0
+                      )
+                    ),
+                  },
+                ]}
+              />
+              {draft.warnings?.map((warning, index) => (
+                <Notice key={index}>{warning}</Notice>
+              ))}
+              <Card
+                title={`Pratinjau 14 kolom · ${draft.period}`}
+                action={
+                  <button
+                    type="button"
+                    className={buttonClass}
+                    disabled={busy || locked}
+                    onClick={() => setConfirm(true)}
+                  >
+                    Konfirmasi penyimpanan
+                  </button>
+                }
+              >
+                <SalesTable records={draft.records} />
+              </Card>
+            </>
+          )}
+
+          <Card title="Riwayat unggahan periode">
+            <LoadState
+              loading={history.loading}
+              error={history.error}
+              onRetry={history.reload}
+            />
+            {history.data && <HistoryTable rows={history.data} />}
+          </Card>
+
+          {confirm && draft && (
+            <Modal
+              title="Konfirmasi penyimpanan Company Sales Report"
+              onClose={() => setConfirm(false)}
+              busy={busy}
+            >
+              <p className="text-sm leading-relaxed text-slate-700">
+                Simpan <strong>{draft.records.length} baris</strong> dari{" "}
+                <strong>{fileName}</strong> untuk periode{" "}
+                <strong>{draft.period}</strong>? Data biaya dan riwayat unggahan
+                akan disimpan bersama.
+              </p>
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  className={secondaryClass}
+                  disabled={busy}
+                  onClick={() => setConfirm(false)}
+                >
+                  Kembali ke pratinjau
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void commit()}
+                >
+                  {busy ? "Menyimpan…" : "Simpan data"}
+                </button>
+              </div>
+            </Modal>
+          )}
         </>
-      )}
-
-      <Card title="Riwayat unggahan periode">
-        <LoadState
-          loading={history.loading}
-          error={history.error}
-          onRetry={history.reload}
-        />
-        {history.data && <HistoryTable rows={history.data} />}
-      </Card>
-
-      {confirm && draft && (
-        <Modal
-          title="Konfirmasi penyimpanan Company Sales Report"
-          onClose={() => setConfirm(false)}
-          busy={busy}
-        >
-          <p className="text-sm leading-relaxed text-slate-700">
-            Simpan <strong>{draft.records.length} baris</strong> dari{" "}
-            <strong>{fileName}</strong> untuk periode{" "}
-            <strong>{draft.period}</strong>? Data biaya dan riwayat unggahan
-            akan disimpan bersama.
-          </p>
-          <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              className={secondaryClass}
-              disabled={busy}
-              onClick={() => setConfirm(false)}
-            >
-              Kembali ke pratinjau
-            </button>
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy}
-              onClick={() => void commit()}
-            >
-              {busy ? "Menyimpan…" : "Simpan data"}
-            </button>
-          </div>
-        </Modal>
       )}
     </Workspace>
   );

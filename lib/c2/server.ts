@@ -76,7 +76,6 @@ async function authorize(request: Request, permission: "read" | "validate" | "de
   return { db, user: data.user, role };
 }
 
-// Service client untuk mem-bypass RLS Supabase secara aman di server
 function service(session: Session) {
   if (!session.user.id || !isFatRole(session.role)) throw new ApiError(403, "Akses ditolak.");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -85,7 +84,6 @@ function service(session: Session) {
   return createSupabaseClient(url, key, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
 }
 
-// Helper untuk memilih client: utamakan service role key di server agar tidak dicegat RLS
 function getDb(session: Session): SupabaseClient {
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
     try { return service(session); }
@@ -115,7 +113,6 @@ function periodValue(value: unknown): string {
   return period;
 }
 
-// Helper cerdas pembersih filter parameter
 function isAll(val?: string | null): boolean {
   if (!val) return true;
   const s = val.trim().toLowerCase();
@@ -123,6 +120,7 @@ function isAll(val?: string | null): boolean {
 }
 
 function cleanCompanyParam(raw: string): string {
+  if (!raw) return "ALL";
   const val = raw.trim();
   if (isAll(val)) return "ALL";
   if (val.includes(" · ")) {
@@ -132,6 +130,7 @@ function cleanCompanyParam(raw: string): string {
 }
 
 function cleanDestParam(raw: string): string {
+  if (!raw) return "ALL";
   const val = raw.trim();
   if (isAll(val)) return "ALL";
   return val;
@@ -175,13 +174,20 @@ async function allRows(query: (start: number, end: number) => PromiseLike<{ data
   }
 }
 
-function companyField(company: string) { return /^CUST-\d+$/i.test(company) ? "customer_code" : "company_name"; }
+function companyField(company: string) {
+  return /^CUST-\d+$/i.test(company) ? "customer_code" : "company_name";
+}
+
+function applyCompanyFilter(query: any, comp: string) {
+  if (comp === "ALL") return query;
+  return query.eq(companyField(comp), comp);
+}
 
 async function companies(db: SupabaseClient, period: string, company = "ALL") {
   const comp = cleanCompanyParam(company);
   const primary = await allRows((start, end) => {
     let query = db.from("vw_c2_company_monthly_summary_v2").select("*").eq("periode", period).order("customer_code").range(start, end);
-    if (comp !== "ALL") query = query.eq(companyField(comp), comp);
+    if (comp !== "ALL") query = applyCompanyFilter(query, comp);
     return query;
   });
   if (primary.length > 0) return primary;
@@ -189,7 +195,7 @@ async function companies(db: SupabaseClient, period: string, company = "ALL") {
   // Fallback 1: View v1 bila v2 kosong
   const fallback = await allRows((start, end) => {
     let query = db.from("vw_c2_company_monthly_summary").select("*").eq("periode", period).order("customer_code").range(start, end);
-    if (comp !== "ALL") query = query.eq(companyField(comp), comp);
+    if (comp !== "ALL") query = applyCompanyFilter(query, comp);
     return query;
   });
   if (fallback.length > 0) return fallback;
@@ -244,7 +250,7 @@ async function records(db: SupabaseClient, period: string, company = "ALL", dest
   const d = cleanDestParam(dest);
   return allRows((start, end) => {
     let query = db.from("c2_monthly_cost_records").select("*").eq("periode", period).order("record_id").range(start, end);
-    if (comp !== "ALL") query = query.eq(companyField(comp), comp);
+    if (comp !== "ALL") query = applyCompanyFilter(query, comp);
     if (d !== "ALL") query = query.eq("dest", d);
     if (uploadId) query = query.eq("upload_id", uploadId);
     return query;
@@ -269,7 +275,6 @@ async function history(db: SupabaseClient, period?: string) {
   });
   if (primary.length > 0) return primary;
 
-  // Fallback ke tabel asli c2_upload_history_logs
   return allRows((start, end) => {
     let query = db.from("c2_upload_history_logs").select("*").order("uploaded_at", { ascending: false }).order("upload_id").range(start, end);
     if (period) query = query.eq("period_month", period);
@@ -277,7 +282,6 @@ async function history(db: SupabaseClient, period?: string) {
   });
 }
 
-// Fungsi sum yang aman: bila kolom bernilai null, undefined, atau "", otomatis dianggap 0
 function sum(rows: Row[], field: string) {
   let cents = 0;
   for (const row of rows) {
@@ -309,13 +313,12 @@ export const periods = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
 
-const rows = await allRows((start, end) =>
+  const rows = await allRows((start, end) =>
     db.from("vw_c2_company_monthly_summary_v2").select("periode,customer_code").order("periode").order("customer_code").range(start, end)
   );
 
   let values = [...new Set(rows.map((row) => String(row.periode)).filter(Boolean))];
 
-  // Fallback 1: Ambil langsung dari tabel c2_monthly_cost_records jika view kosong
   if (!values.length) {
     const rawRecords = await allRows((start, end) =>
       db.from("c2_monthly_cost_records").select("periode").order("periode").range(start, end)
@@ -323,7 +326,6 @@ const rows = await allRows((start, end) =>
     values = [...new Set(rawRecords.map((r) => String(r.periode)).filter(Boolean))];
   }
 
-  // Fallback 2: Ambil dari c2_period_validations
   if (!values.length) {
     const valRows = await allRows((start, end) =>
       db.from("c2_period_validations").select("periode").order("periode").range(start, end)
@@ -344,28 +346,96 @@ const rows = await allRows((start, end) =>
   return ok(values.sort((a, b) => ordinal(b) - ordinal(a)));
 });
 
+// DASHBOARD ENDPOINT DENGAN PERLINDUNGAN FALLBACK OTOMATIS
 export const dashboard = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
   const { period, company } = filters(request);
-  const [rows, state] = await Promise.all([companies(db, period!, company), validation(db, period!)]);
-  return ok({ companies: rows, kpis: kpis(rows), validation: state });
+
+  // 1. Selalu ambil daftar seluruh perusahaan yang sah di periode ini
+  const allComp = await companies(db, period!, "ALL");
+
+  // 2. Cegah kebocoran perusahaan dari periode lain: jika perusahaan yang diminta tidak ada di periode ini, otomatis fallback ke "ALL"
+  const compExists =
+    company === "ALL" ||
+    allComp.some(
+      (c) =>
+        String(c.company_name).trim().toLowerCase() === company.toLowerCase() ||
+        String(c.customer_code).trim().toLowerCase() === company.toLowerCase()
+    );
+
+  const effectiveCompany = compExists ? company : "ALL";
+
+  // 3. Ambil data baris sesuai effectiveCompany
+  const rows = effectiveCompany === "ALL" ? allComp : await companies(db, period!, effectiveCompany);
+  const state = await validation(db, period!);
+
+  return ok({
+    companies: rows,
+    all_companies: allComp,
+    effective_company: effectiveCompany,
+    kpis: kpis(rows),
+    validation: state,
+  });
 });
 
 export const customerList = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
   const { period, company } = filters(request);
-  const [summary, details] = await Promise.all([companies(db, period!, company), records(db, period!, company)]);
-  return ok({ companies: summary, records: details });
+
+  // Selalu muat master perusahaan untuk periode ini agar dropdown pelanggan tidak terpotong
+  const allComp = await companies(db, period!, "ALL");
+  const compExists =
+    company === "ALL" ||
+    allComp.some(
+      (c) =>
+        String(c.company_name).trim().toLowerCase() === company.toLowerCase() ||
+        String(c.customer_code).trim().toLowerCase() === company.toLowerCase()
+    );
+
+  const effectiveCompany = compExists ? company : "ALL";
+  const [summary, details] = await Promise.all([
+    effectiveCompany === "ALL" ? allComp : companies(db, period!, effectiveCompany),
+    records(db, period!, effectiveCompany),
+  ]);
+
+  return ok({ companies: summary, all_companies: allComp, records: details });
 });
 
+// TAX TRACING DENGAN AUTO-EXTRACTION DESTINASI & VALIDASI PERIODE
 export const taxTracing = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
   const { period, company, dest } = filters(request);
 
-  // 1. Coba ambil dari vw_c2_company_tax_tracing_v2
+  // 1. Ambil seluruh transaksi master untuk periode ini (company="ALL", dest="ALL")
+  const allPeriodRecords = await records(db, period!, "ALL", "ALL");
+
+  // 2. Ekstraksi seluruh destinasi unik yang valid di periode ini langsung dari database
+  const allDestinations = [
+    ...new Set(allPeriodRecords.map((r) => String(r.dest || "").trim()).filter(Boolean)),
+  ].sort();
+
+  // 3. Ambil seluruh perusahaan master untuk periode ini
+  const allComp = await companies(db, period!, "ALL");
+
+  // 4. Validasi keberadaan company & dest di periode ini untuk mencegah kebocoran state filter lama
+  const compExists =
+    company === "ALL" ||
+    allComp.some(
+      (c) =>
+        String(c.company_name).trim().toLowerCase() === company.toLowerCase() ||
+        String(c.customer_code).trim().toLowerCase() === company.toLowerCase()
+    );
+  const effectiveCompany = compExists ? company : "ALL";
+
+  const destExists =
+    dest === "ALL" ||
+    allDestinations.some((d) => d.toLowerCase() === dest.toLowerCase());
+  const effectiveDest = destExists ? dest : "ALL";
+
+  // 5. Kueri data pajak berdasarkan filter yang valid
   let rows = await allRows((start, end) => {
     let query = db
       .from("vw_c2_company_tax_tracing_v2")
@@ -373,12 +443,11 @@ export const taxTracing = api(async (request) => {
       .eq("periode", period!)
       .order("customer_code")
       .range(start, end);
-    if (company !== "ALL") query = query.eq(companyField(company), company);
-    if (dest !== "ALL") query = query.eq("dest", dest);
+    if (effectiveCompany !== "ALL") query = applyCompanyFilter(query, effectiveCompany);
+    if (effectiveDest !== "ALL") query = query.eq("dest", effectiveDest);
     return query;
   });
 
-  // 2. Fallback ke view v1 jika v2 kosong
   if (!rows.length) {
     rows = await allRows((start, end) => {
       let query = db
@@ -387,15 +456,19 @@ export const taxTracing = api(async (request) => {
         .eq("periode", period!)
         .order("customer_code")
         .range(start, end);
-      if (company !== "ALL") query = query.eq(companyField(company), company);
-      if (dest !== "ALL") query = query.eq("dest", dest);
+      if (effectiveCompany !== "ALL") query = applyCompanyFilter(query, effectiveCompany);
+      if (effectiveDest !== "ALL") query = query.eq("dest", effectiveDest);
       return query;
     });
   }
 
-  const details = await records(db, period!, company, dest);
+  // Ambil rincian records sesuai filter aktif
+  const details =
+    effectiveCompany === "ALL" && effectiveDest === "ALL"
+      ? allPeriodRecords
+      : await records(db, period!, effectiveCompany, effectiveDest);
 
-  // 3. Fallback ketiga: Agregasi langsung dari tabel transaksi c2_monthly_cost_records bila view kosong
+  // Fallback agregasi jika view belum ada di basis data
   if (!rows.length && details.length > 0) {
     const groupMap = new Map<string, Row>();
     for (const r of details) {
@@ -429,7 +502,6 @@ export const taxTracing = api(async (request) => {
     rows = [...groupMap.values()];
   }
 
-  // Sanitasi setiap baris agar tidak ada field bernilai null atau undefined
   for (const r of rows) {
     r.total_sub_total = Number(r.total_sub_total ?? r.sub_total ?? 0);
     r.total_vat_11 = Number(r.total_vat_11 ?? r.vat_amount ?? 0);
@@ -468,6 +540,10 @@ export const taxTracing = api(async (request) => {
   return ok({
     companies: grouped,
     records: details,
+    all_destinations: allDestinations,
+    all_companies: allComp,
+    effective_company: effectiveCompany,
+    effective_dest: effectiveDest,
     totals: {
       sub_total: sum(rows, "total_sub_total"),
       vat_amount: sum(rows, "total_vat_11"),

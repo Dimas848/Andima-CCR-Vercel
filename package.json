@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/c2-parser.test.ts tests/c2-report.test.ts tests/c2-api.test.ts"
   },
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.109.0",
