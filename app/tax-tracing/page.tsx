@@ -11,11 +11,12 @@ import {
   SalesTable,
   Modal,
   Notice,
+  countRecordsIssues,
   type Column,
 } from "@/components/c2-workspace";
 import {
-  amount,
   money,
+  number,
   query,
   useApi,
   useFilter,
@@ -51,6 +52,8 @@ export default function TaxTracingPage() {
   );
 
   const data = result.data;
+  const isLoading = filter.loading || result.loading;
+  const allIssues = countRecordsIssues(data?.records ?? []);
 
   const columns: Column<TaxSummary>[] = [
     {
@@ -62,18 +65,35 @@ export default function TaxTracingPage() {
         </>
       ),
     },
-    { label: "Job", cell: (row) => row.job_count, numeric: true },
-    { label: "Sub Total", cell: (row) => money(row.total_sub_total), numeric: true },
-    { label: "VAT (PPN 11%)", cell: (row) => money(row.total_vat_11), numeric: true },
-    { label: "Cost PPh 23", cell: (row) => money(row.total_pph_23), numeric: true },
-    { label: "Others / DIP IATA", cell: (row) => money(row.total_others), numeric: true },
-    { label: "Total Cost", cell: (row) => money(row.total_cost), numeric: true },
+    { label: "Job", cell: (row) => number(row.job_count), numeric: true },
+    { label: "DPP (Dasar Pajak)", cell: (row) => money(row.total_sub_total), numeric: true },
+    { label: "PPN (VAT 11%)", cell: (row) => money(row.total_vat_11), numeric: true },
+    { label: "PPh 23 (2%)", cell: (row) => money(row.total_pph_23), numeric: true },
+    { label: "Others", cell: (row) => money(row.total_others_only), numeric: true },
+    { label: "DIP IATA", cell: (row) => money(row.total_dip_iata), numeric: true },
+    { label: "Total Cost", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
+    {
+      label: "Issue",
+      cell: (row) => {
+        const compRecords = (data?.records ?? []).filter((r) => r.company_name === row.company_name);
+        const compIssues = countRecordsIssues(compRecords);
+        return compIssues === 0 ? (
+          <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            0 Issue
+          </span>
+        ) : (
+          <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+            {compIssues} Issue
+          </span>
+        );
+      },
+    },
     {
       label: "Rincian",
       cell: (row) => (
         <button
           type="button"
-          className="text-sky-700 hover:text-sky-900 underline font-medium cursor-pointer"
+          className="cursor-pointer font-medium text-sky-700 underline hover:text-sky-900"
           onClick={() => setDetail(row.company_name)}
         >
           Lihat rincian
@@ -84,11 +104,12 @@ export default function TaxTracingPage() {
 
   return (
     <Workspace
-      title="Tax Component Tracing"
-      description="Telusuri komponen biaya, VAT, dan PPh 23 per perusahaan. Kartu, tabel, dan rincian memakai filter yang sama."
+      title="Pelacakan Komponen Pajak (Tax Tracing)"
+      description="Telusuri Dasar Pengenaan Pajak (DPP), PPN 11%, PPh 23, Others, DIP IATA, dan potensi Issue per perusahaan."
     >
       <Filters
         {...filter}
+        loading={isLoading}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setDetail(null);
@@ -97,7 +118,7 @@ export default function TaxTracingPage() {
         companies={options.data?.companies}
         onCompany={(value) => {
           setCompany(value);
-          setDest("ALL"); // Otomatis reset destinasi ke Semua saat perusahaan diubah
+          setDest("ALL");
           setDetail(null);
         }}
         dest={dest}
@@ -115,33 +136,38 @@ export default function TaxTracingPage() {
       />
 
       <LoadState
-        loading={filter.loading || result.loading}
+        loading={isLoading}
         error={filter.error || result.error || options.error}
         onRetry={result.reload}
+        variant="page"
       />
 
-      {!filter.loading && !filter.period && !filter.error && (
+      {!isLoading && !filter.period && !filter.error && (
         <Notice>Belum ada data pajak bulanan.</Notice>
       )}
 
-      {data && (
+      {!isLoading && data && (
         <>
+          {/* 8 Tile Baku sesuai Revisi Mas Bram */}
           <Kpis
             items={[
-              { label: "Sub Total Cost", value: money(data.totals.sub_total) },
-              { label: "VAT (PPN 11%)", value: money(data.totals.vat_amount) },
-              { label: "Cost PPh 23", value: money(data.totals.pph23_amount) },
+              { label: "1. Total Perusahaan", value: number(data.companies.length), detail: "Perusahaan sesuai filter" },
+              { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(data.totals.sub_total), detail: "Basis perhitungan pajak" },
+              { label: "3. PPN (VAT 11%)", value: money(data.totals.vat_amount), detail: "Pajak Pertambahan Nilai" },
+              { label: "4. PPh 23 (2%)", value: money(data.totals.pph23_amount), detail: "Dipungut oleh pelanggan" },
+              { label: "5. Others", value: money(data.totals.others_cost), detail: "PPh 22 / PPh 26 / biaya lain" },
+              { label: "6. DIP IATA", value: money(data.totals.dip_iata_cost), detail: "Biaya organisasi IATA" },
+              { label: "7. Total Cost Bulanan", value: money(data.totals.total_cost), detail: "Akumulasi seluruh biaya" },
               {
-                label: "Others / DIP IATA",
-                value: money(
-                  amount(data.totals.others_cost) + amount(data.totals.dip_iata_cost)
-                ),
+                label: "8. Total Issue",
+                value: `${number(allIssues)} Issue`,
+                detail: allIssues > 0 ? "Transaksi perlu diperiksa" : "Seluruh komponen pajak sesuai",
+                alert: allIssues > 0,
               },
-              { label: "Total Cost", value: money(data.totals.total_cost) },
             ]}
           />
 
-          <Card title="Agregasi biaya dan pajak per perusahaan">
+          <Card title="Agregasi DPP, Pajak, Others, dan DIP IATA per Perusahaan">
             <DataTable rows={data.companies} columns={columns} rowKey={(row) => row.customer_code} />
           </Card>
         </>

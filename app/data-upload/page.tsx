@@ -14,6 +14,7 @@ import {
   HistoryTable,
   Modal,
   Status,
+  countRecordsIssues,
   buttonClass,
   secondaryClass,
   fieldClass,
@@ -47,6 +48,14 @@ const MONTHS_ID = [
   "Desember",
 ];
 
+// Helper mendapatkan batas bulan berjalan saat ini dalam format YYYY-MM
+function getCurrentMaxMonth(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
 // Helper mengubah "2026-11" -> "November 2026"
 function formatToIndonesianPeriod(val: string): string {
   if (!val) return "";
@@ -73,6 +82,14 @@ function toMonthInputValue(periodStr: string): string {
   }
   if (/^\d{4}-\d{2}$/.test(periodStr)) return periodStr;
   return "";
+}
+
+// Cek apakah periode yang dipilih melebihi bulan berjalan saat ini
+function isFuturePeriod(periodStr: string): boolean {
+  const ym = toMonthInputValue(periodStr);
+  if (!ym) return false;
+  const maxYm = getCurrentMaxMonth();
+  return ym > maxYm;
 }
 
 interface Draft {
@@ -106,32 +123,62 @@ export default function DataUploadPage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const locked = Boolean(status.data?.validation?.is_validated);
-  const disabled =
-    busy ||
-    locked ||
-    !filter.period ||
-    status.loading ||
-    Boolean(status.error) ||
-    !user.data;
+  const maxAllowedMonth = useMemo(() => getCurrentMaxMonth(), []);
+  const maxAllowedLabel = useMemo(
+    () => formatToIndonesianPeriod(maxAllowedMonth),
+    [maxAllowedMonth]
+  );
 
   const currentMonthValue = useMemo(
     () => toMonthInputValue(filter.period),
     [filter.period]
   );
 
+  const futureBlocked = useMemo(
+    () => isFuturePeriod(filter.period),
+    [filter.period]
+  );
+
+  const locked = Boolean(status.data?.validation?.is_validated);
+  const isInitialLoading = filter.loading || status.loading || user.loading;
+
+  const disabled =
+    busy ||
+    locked ||
+    futureBlocked ||
+    !filter.period ||
+    isInitialLoading ||
+    Boolean(status.error) ||
+    !user.data;
+
   function changePeriod(value: string) {
     if (busy) return;
     const formatted = formatToIndonesianPeriod(value);
-    filter.setPeriod(formatted);
     setDraft(null);
     setFileName("");
-    setError(undefined);
     setNotice(undefined);
+
+    if (isFuturePeriod(formatted)) {
+      filter.setPeriod(formatted);
+      setError(
+        `Periode ${formatted} belum berjalan. Unggahan data hanya diizinkan maksimal sampai bulan berjalan (${maxAllowedLabel}).`
+      );
+      return;
+    }
+
+    setError(undefined);
+    filter.setPeriod(formatted);
   }
 
   async function preview(file: File | undefined) {
     if (!file || disabled) return;
+    if (isFuturePeriod(filter.period)) {
+      setError(
+        `Tidak dapat mengunggah data untuk periode masa depan (${filter.period}). Maksimal periode yang diizinkan adalah ${maxAllowedLabel}.`
+      );
+      return;
+    }
+
     setError(undefined);
     setNotice(undefined);
     setDraft(null);
@@ -156,6 +203,12 @@ export default function DataUploadPage() {
         method: "POST",
         body: form,
       });
+      if (isFuturePeriod(res.period)) {
+        setError(
+          `Berkas ditolak: Isi berkas menunjukkan periode masa depan (${res.period}). Maksimal periode yang diizinkan adalah ${maxAllowedLabel}.`
+        );
+        return;
+      }
       setDraft(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Pratinjau gagal dibuat.");
@@ -166,7 +219,7 @@ export default function DataUploadPage() {
   }
 
   async function commit() {
-    if (!draft || busy) return;
+    if (!draft || busy || isFuturePeriod(draft.period)) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -196,10 +249,14 @@ export default function DataUploadPage() {
     }
   }
 
+  const draftSum = (
+    key: "sub_total" | "vat_amount" | "pph23_amount" | "others_cost" | "dip_iata_cost" | "total_cost"
+  ) => draft?.records.reduce((total, row) => total + amount(row[key]), 0) ?? 0;
+
   return (
     <Workspace
-      title="Data Upload"
-      description="Unggah Company Sales Report, periksa 14 kolom dan ringkasan, lalu konfirmasi penyimpanan."
+      title="Unggah Data (Data Upload)"
+      description="Unggah Company Sales Report, periksa 14 kolom beserta 8 indikator biaya & pajak, lalu konfirmasi penyimpanan."
       action={
         <Link href="/evidence" className={secondaryClass}>
           Lihat Evidence
@@ -208,6 +265,8 @@ export default function DataUploadPage() {
     >
       <Filters
         {...filter}
+        periods={filter.periods.filter((p) => !isFuturePeriod(p))}
+        loading={isInitialLoading}
         onPeriod={changePeriod}
         refresh={() => {
           filter.reload();
@@ -216,13 +275,14 @@ export default function DataUploadPage() {
         }}
       />
 
-      <Card title="Periode dan dokumen sumber">
+      <Card title="Periode dan Dokumen Sumber">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
           <label className="text-xs font-semibold text-slate-600">
-            Periode baru (bila belum ada pada daftar)
+            Periode laporan (maksimal bulan berjalan: {maxAllowedLabel})
             <input
               type="month"
               value={currentMonthValue}
+              max={maxAllowedMonth}
               className={`${fieldClass} mt-1.5`}
               disabled={busy}
               onChange={(event) => {
@@ -231,32 +291,48 @@ export default function DataUploadPage() {
             />
           </label>
           <div className="text-sm text-slate-500">
-            {user.data && (
-              <p>
-                {user.data.name} · {user.data.role}
-              </p>
-            )}
-            {status.data && (
-              <div className="mt-2">
-                <Status validated={locked} />
+            {isInitialLoading ? (
+              <div className="space-y-2 animate-pulse">
+                <div className="h-4 w-48 rounded bg-slate-200" />
+                <div className="ml-auto h-6 w-24 rounded-full bg-slate-200" />
               </div>
+            ) : (
+              <>
+                {user.data && (
+                  <p>
+                    {user.data.name} · {user.data.role}
+                  </p>
+                )}
+                {status.data && (
+                  <div className="mt-2">
+                    <Status validated={locked} />
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
 
-        <LoadState
-          loading={filter.loading || status.loading || user.loading}
-          error={filter.error || status.error || user.error}
-          onRetry={() => {
-            status.reload();
-            user.reload();
-          }}
-        />
+        {(filter.error || status.error || user.error) && (
+          <LoadState
+            loading={false}
+            error={filter.error || status.error || user.error}
+            onRetry={() => {
+              status.reload();
+              user.reload();
+            }}
+          />
+        )}
 
         {locked && (
           <Notice>
-            Periode ini telah divalidasi. Unggahan baru tidak dapat disimpan
-            pada periode terkunci.
+            Periode ini telah disahkan dan dikunci. Unggahan baru tidak dapat disimpan pada periode terkunci.
+          </Notice>
+        )}
+
+        {futureBlocked && (
+          <Notice error>
+            Periode {filter.period} belum berjalan. Sistem mengunci unggahan untuk bulan masa depan (maksimal periode yang diizinkan: {maxAllowedLabel}).
           </Notice>
         )}
 
@@ -278,6 +354,8 @@ export default function DataUploadPage() {
           className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
             dragging
               ? "border-sky-600 bg-sky-100"
+              : disabled
+              ? "border-slate-200 bg-slate-100/70 opacity-75"
               : "border-slate-300 bg-slate-50"
           }`}
         >
@@ -286,7 +364,7 @@ export default function DataUploadPage() {
             Tarik berkas Company Sales Report ke sini
           </p>
           <p className="mb-4 mt-2 text-sm text-slate-500">
-            CSV atau XLSX · maksimal 25 MB · pilih periode terlebih dahulu
+            CSV atau XLSX · maksimal 25 MB · hanya untuk periode berjalan atau sebelumnya
           </p>
           <input
             ref={input}
@@ -313,7 +391,7 @@ export default function DataUploadPage() {
         </div>
         <p className="mt-4 text-xs leading-relaxed text-slate-500">
           Kolom wajib: Periode, Job Number, Company, MAWB No., CW, DEST, Invoice
-          Nominal, Sub Total, VAT, Cost PPH 23, Others, DIP IATA, Total Cost,
+          Nominal, DPP (Sub Total), PPN (VAT 11%), PPh 23, Others, DIP IATA, Total Cost,
           dan Profit.
         </p>
       </Card>
@@ -326,23 +404,38 @@ export default function DataUploadPage() {
           <Kpis
             items={[
               {
-                label: "Baris valid",
-                value: number(draft.records.length),
+                label: "1. Total Perusahaan",
+                value: number(new Set(draft.records.map((row) => row.company_name)).size),
+                detail: `${number(draft.records.length)} baris transaksi valid`,
               },
               {
-                label: "Total perusahaan",
-                value: number(
-                  new Set(draft.records.map((row) => row.company_name)).size
-                ),
+                label: "2. DPP (Dasar Pengenaan Pajak)",
+                value: money(draftSum("sub_total")),
               },
               {
-                label: "Total Cost",
-                value: money(
-                  draft.records.reduce(
-                    (sum, row) => sum + amount(row.total_cost),
-                    0
-                  )
-                ),
+                label: "3. PPN (VAT 11%)",
+                value: money(draftSum("vat_amount")),
+              },
+              {
+                label: "4. PPh 23 (2%)",
+                value: money(draftSum("pph23_amount")),
+              },
+              {
+                label: "5. Others",
+                value: money(draftSum("others_cost")),
+              },
+              {
+                label: "6. DIP IATA",
+                value: money(draftSum("dip_iata_cost")),
+              },
+              {
+                label: "7. Total Cost Bulanan",
+                value: money(draftSum("total_cost")),
+              },
+              {
+                label: "8. Total Issue",
+                value: `${number(countRecordsIssues(draft.records))} Issue`,
+                alert: countRecordsIssues(draft.records) > 0,
               },
             ]}
           />
@@ -350,15 +443,15 @@ export default function DataUploadPage() {
             <Notice key={index}>{warning}</Notice>
           ))}
           <Card
-            title={`Pratinjau 14 kolom · ${draft.period}`}
+            title={`Pratinjau 14 Kolom · ${draft.period}`}
             action={
               <button
                 type="button"
                 className={buttonClass}
-                disabled={busy || locked}
+                disabled={busy || locked || futureBlocked}
                 onClick={() => setConfirm(true)}
               >
-                Konfirmasi penyimpanan
+                Konfirmasi Penyimpanan
               </button>
             }
           >
@@ -367,18 +460,20 @@ export default function DataUploadPage() {
         </>
       )}
 
-      <Card title="Riwayat unggahan periode">
+      <Card title="Riwayat Unggahan Periode">
         <LoadState
           loading={history.loading}
           error={history.error}
           onRetry={history.reload}
+          variant="table"
+          rows={4}
         />
-        {history.data && <HistoryTable rows={history.data} />}
+        {!history.loading && history.data && <HistoryTable rows={history.data} />}
       </Card>
 
       {confirm && draft && (
         <Modal
-          title="Konfirmasi penyimpanan Company Sales Report"
+          title="Konfirmasi Penyimpanan Company Sales Report"
           onClose={() => setConfirm(false)}
           busy={busy}
         >
