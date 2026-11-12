@@ -53,6 +53,7 @@ export default function TaxTracingPage() {
 
   const data = result.data;
   const isLoading = filter.loading || result.loading;
+  const loadError = filter.error || result.error || options.error;
   const allIssues = countRecordsIssues(data?.records ?? []);
 
   const columns: Column<TaxSummary>[] = [
@@ -69,21 +70,21 @@ export default function TaxTracingPage() {
     { label: "DPP (Dasar Pajak)", cell: (row) => money(row.total_sub_total), numeric: true },
     { label: "PPN (VAT 11%)", cell: (row) => money(row.total_vat_11), numeric: true },
     { label: "PPh 23 (2%)", cell: (row) => money(row.total_pph_23), numeric: true },
-    { label: "Others", cell: (row) => money(row.total_others_only), numeric: true },
+    { label: "Lain-lain", cell: (row) => money(row.total_others_only), numeric: true },
     { label: "DIP IATA", cell: (row) => money(row.total_dip_iata), numeric: true },
-    { label: "Total Cost", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
+    { label: "Total Biaya", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
     {
-      label: "Issue",
+      label: "Kendala",
       cell: (row) => {
         const compRecords = (data?.records ?? []).filter((r) => r.company_name === row.company_name);
         const compIssues = countRecordsIssues(compRecords);
         return compIssues === 0 ? (
           <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-            0 Issue
+            0 Kendala
           </span>
         ) : (
           <span className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-            {compIssues} Issue
+            {compIssues} Kendala
           </span>
         );
       },
@@ -104,8 +105,8 @@ export default function TaxTracingPage() {
 
   return (
     <Workspace
-      title="Pelacakan Komponen Pajak (Tax Tracing)"
-      description="Telusuri Dasar Pengenaan Pajak (DPP), PPN 11%, PPh 23, Others, DIP IATA, dan potensi Issue per perusahaan."
+      title="Tax Component Tracing"
+      description="Telusuri Dasar Pengenaan Pajak (DPP), PPN 11%, PPh 23, Lain-lain, DIP IATA, dan potensi kendala per perusahaan."
     >
       <Filters
         {...filter}
@@ -122,9 +123,7 @@ export default function TaxTracingPage() {
           setDetail(null);
         }}
         dest={dest}
-        destinations={[
-          ...new Set(options.data?.records.map((row) => row.dest) ?? []),
-        ].filter(Boolean)}
+        destinations={[...new Set(options.data?.records.map((row) => row.dest) ?? [])].filter(Boolean)}
         onDest={(value) => {
           setDest(value);
           setDetail(null);
@@ -137,37 +136,34 @@ export default function TaxTracingPage() {
 
       <LoadState
         loading={isLoading}
-        error={filter.error || result.error || options.error}
+        error={!isLoading ? loadError : undefined}
         onRetry={result.reload}
         variant="page"
       />
 
-      {!isLoading && !filter.period && !filter.error && (
-        <Notice>Belum ada data pajak bulanan.</Notice>
-      )}
+      {!isLoading && !filter.period && !loadError && <Notice>Belum ada data pajak bulanan.</Notice>}
 
-      {!isLoading && data && (
+      {!isLoading && !loadError && data && (
         <>
-          {/* 8 Tile Baku sesuai Revisi Mas Bram */}
           <Kpis
             items={[
               { label: "1. Total Perusahaan", value: number(data.companies.length), detail: "Perusahaan sesuai filter" },
               { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(data.totals.sub_total), detail: "Basis perhitungan pajak" },
               { label: "3. PPN (VAT 11%)", value: money(data.totals.vat_amount), detail: "Pajak Pertambahan Nilai" },
               { label: "4. PPh 23 (2%)", value: money(data.totals.pph23_amount), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Others", value: money(data.totals.others_cost), detail: "PPh 22 / PPh 26 / biaya lain" },
+              { label: "5. Lain-lain", value: money(data.totals.others_cost), detail: "PPh 22 / PPh 26 / biaya lain" },
               { label: "6. DIP IATA", value: money(data.totals.dip_iata_cost), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Cost Bulanan", value: money(data.totals.total_cost), detail: "Akumulasi seluruh biaya" },
+              { label: "7. Total Biaya Bulanan", value: money(data.totals.total_cost), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Issue",
-                value: `${number(allIssues)} Issue`,
+                label: "8. Total Kendala",
+                value: `${number(allIssues)} Kendala`,
                 detail: allIssues > 0 ? "Transaksi perlu diperiksa" : "Seluruh komponen pajak sesuai",
                 alert: allIssues > 0,
               },
             ]}
           />
 
-          <Card title="Agregasi DPP, Pajak, Others, dan DIP IATA per Perusahaan">
+          <Card title="Agregasi DPP, Pajak, Lain-lain, dan DIP IATA per Perusahaan">
             <DataTable rows={data.companies} columns={columns} rowKey={(row) => row.customer_code} />
           </Card>
         </>
@@ -178,9 +174,7 @@ export default function TaxTracingPage() {
           title={`${detail} · ${filter.period} · ${dest === "ALL" ? "Semua destinasi" : dest}`}
           onClose={() => setDetail(null)}
         >
-          <SalesTable
-            records={data.records.filter((row) => row.company_name === detail)}
-          />
+          <SalesTable records={data.records.filter((row) => row.company_name === detail)} />
         </Modal>
       )}
     </Workspace>

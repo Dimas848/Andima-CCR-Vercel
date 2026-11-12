@@ -48,7 +48,6 @@ const MONTHS_ID = [
   "Desember",
 ];
 
-// Helper mendapatkan batas bulan berjalan saat ini dalam format YYYY-MM
 function getCurrentMaxMonth(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -56,7 +55,6 @@ function getCurrentMaxMonth(): string {
   return `${year}-${month}`;
 }
 
-// Helper mengubah "2026-11" -> "November 2026"
 function formatToIndonesianPeriod(val: string): string {
   if (!val) return "";
   const iso = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(val.trim());
@@ -67,14 +65,11 @@ function formatToIndonesianPeriod(val: string): string {
   return val;
 }
 
-// Helper mengubah "November 2026" -> "2026-11" untuk input kalender
 function toMonthInputValue(periodStr: string): string {
   if (!periodStr) return "";
   const parts = periodStr.trim().split(" ");
   if (parts.length === 2) {
-    const idx = MONTHS_ID.findIndex(
-      (m) => m.toLowerCase() === parts[0].toLowerCase()
-    );
+    const idx = MONTHS_ID.findIndex((m) => m.toLowerCase() === parts[0].toLowerCase());
     if (idx >= 0) {
       const monthNum = String(idx + 1).padStart(2, "0");
       return `${parts[1]}-${monthNum}`;
@@ -84,7 +79,6 @@ function toMonthInputValue(periodStr: string): string {
   return "";
 }
 
-// Cek apakah periode yang dipilih melebihi bulan berjalan saat ini
 function isFuturePeriod(periodStr: string): boolean {
   const ym = toMonthInputValue(periodStr);
   if (!ym) return false;
@@ -104,14 +98,10 @@ export default function DataUploadPage() {
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
   const history = useApi<Evidence[]>(
-    filter.period
-      ? query("/api/v1/cost-evidence/history", { period: filter.period })
-      : null
+    filter.period ? query("/api/v1/cost-evidence/history", { period: filter.period }) : null
   );
   const status = useApi<ValidationData>(
-    filter.period
-      ? query("/api/v1/cost-validation/summary", { period: filter.period })
-      : null
+    filter.period ? query("/api/v1/cost-validation/summary", { period: filter.period }) : null
   );
 
   const input = useRef<HTMLInputElement>(null);
@@ -124,20 +114,9 @@ export default function DataUploadPage() {
   const [notice, setNotice] = useState<string>();
 
   const maxAllowedMonth = useMemo(() => getCurrentMaxMonth(), []);
-  const maxAllowedLabel = useMemo(
-    () => formatToIndonesianPeriod(maxAllowedMonth),
-    [maxAllowedMonth]
-  );
-
-  const currentMonthValue = useMemo(
-    () => toMonthInputValue(filter.period),
-    [filter.period]
-  );
-
-  const futureBlocked = useMemo(
-    () => isFuturePeriod(filter.period),
-    [filter.period]
-  );
+  const maxAllowedLabel = useMemo(() => formatToIndonesianPeriod(maxAllowedMonth), [maxAllowedMonth]);
+  const currentMonthValue = useMemo(() => toMonthInputValue(filter.period), [filter.period]);
+  const futureBlocked = useMemo(() => isFuturePeriod(filter.period), [filter.period]);
 
   const locked = Boolean(status.data?.validation?.is_validated);
   const isInitialLoading = filter.loading || status.loading || user.loading;
@@ -161,7 +140,7 @@ export default function DataUploadPage() {
     if (isFuturePeriod(formatted)) {
       filter.setPeriod(formatted);
       setError(
-        `Periode ${formatted} belum berjalan. Unggahan data hanya diizinkan maksimal sampai bulan berjalan (${maxAllowedLabel}).`
+        `Kalender ${formatted} belum berjalan. Unggahan data hanya diizinkan maksimal sampai bulan berjalan (${maxAllowedLabel}).`
       );
       return;
     }
@@ -174,7 +153,7 @@ export default function DataUploadPage() {
     if (!file || disabled) return;
     if (isFuturePeriod(filter.period)) {
       setError(
-        `Tidak dapat mengunggah data untuk periode masa depan (${filter.period}). Maksimal periode yang diizinkan adalah ${maxAllowedLabel}.`
+        `Tidak dapat mengunggah data untuk bulan mendatang (${filter.period}). Maksimal kalender yang diizinkan adalah ${maxAllowedLabel}.`
       );
       return;
     }
@@ -185,7 +164,7 @@ export default function DataUploadPage() {
     setFileName(file.name);
 
     if (!/\.(csv|xlsx)$/i.test(file.name)) {
-      setError("Pilih berkas Company Sales Report berformat .csv atau .xlsx.");
+      setError("Pilih berkas Laporan Penjualan Perusahaan berformat .csv atau .xlsx.");
       return;
     }
     if (file.size > 25 * 1024 * 1024) {
@@ -205,7 +184,7 @@ export default function DataUploadPage() {
       });
       if (isFuturePeriod(res.period)) {
         setError(
-          `Berkas ditolak: Isi berkas menunjukkan periode masa depan (${res.period}). Maksimal periode yang diizinkan adalah ${maxAllowedLabel}.`
+          `Berkas ditolak: Isi berkas menunjukkan bulan mendatang (${res.period}). Maksimal kalender yang diizinkan adalah ${maxAllowedLabel}.`
         );
         return;
       }
@@ -223,18 +202,15 @@ export default function DataUploadPage() {
     setBusy(true);
     setError(undefined);
     try {
-      const saved = await api<{ upload_id: string; inserted_rows: number }>(
-        "/api/v1/cost-ingestion/confirm",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ draftId: draft.draftId }),
-        }
-      );
+      const saved = await api<{ upload_id: string; inserted_rows: number }>("/api/v1/cost-ingestion/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ draftId: draft.draftId }),
+      });
       setNotice(
-        `Penyimpanan berhasil: ${
-          saved.inserted_rows ?? draft.records.length
-        } baris. ID unggahan: ${saved.upload_id}. Waktu unggah tersedia pada riwayat.`
+        `Penyimpanan berhasil: ${saved.inserted_rows ?? draft.records.length} baris. ID unggahan: ${
+          saved.upload_id
+        }. Waktu unggah tersedia pada riwayat.`
       );
       setDraft(null);
       setConfirm(false);
@@ -255,11 +231,11 @@ export default function DataUploadPage() {
 
   return (
     <Workspace
-      title="Unggah Data (Data Upload)"
-      description="Unggah Company Sales Report, periksa 14 kolom beserta 8 indikator biaya & pajak, lalu konfirmasi penyimpanan."
+      title="Data Upload"
+      description="Unggah Laporan Penjualan Perusahaan, periksa 14 kolom beserta 8 indikator biaya & pajak, lalu konfirmasi penyimpanan."
       action={
         <Link href="/evidence" className={secondaryClass}>
-          Lihat Evidence
+          Lihat Bukti Dokumen
         </Link>
       }
     >
@@ -275,26 +251,33 @@ export default function DataUploadPage() {
         }}
       />
 
-      <Card title="Periode dan Dokumen Sumber">
+      <Card title="Kalender">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-          <label className="text-xs font-semibold text-slate-600">
-            Periode laporan (maksimal bulan berjalan: {maxAllowedLabel})
-            <input
-              type="month"
-              value={currentMonthValue}
-              max={maxAllowedMonth}
-              className={`${fieldClass} mt-1.5`}
-              disabled={busy}
-              onChange={(event) => {
-                if (event.target.value) changePeriod(event.target.value);
-              }}
-            />
-          </label>
+          {isInitialLoading ? (
+            <div className="animate-pulse space-y-2">
+              <div className="h-3.5 w-56 rounded bg-slate-200" />
+              <div className="h-10 w-52 rounded-lg bg-slate-200" />
+            </div>
+          ) : (
+            <label className="text-xs font-semibold text-slate-600">
+              Kalender laporan
+              <input
+                type="month"
+                value={currentMonthValue}
+                max={maxAllowedMonth}
+                className={`${fieldClass} mt-1.5`}
+                disabled={busy}
+                onChange={(event) => {
+                  if (event.target.value) changePeriod(event.target.value);
+                }}
+              />
+            </label>
+          )}
           <div className="text-sm text-slate-500">
             {isInitialLoading ? (
-              <div className="space-y-2 animate-pulse">
+              <div className="animate-pulse space-y-2">
                 <div className="h-4 w-48 rounded bg-slate-200" />
-                <div className="ml-auto h-6 w-24 rounded-full bg-slate-200" />
+                <div className="ml-auto h-6 w-28 rounded-full bg-slate-200" />
               </div>
             ) : (
               <>
@@ -326,73 +309,77 @@ export default function DataUploadPage() {
 
         {locked && (
           <Notice>
-            Periode ini telah disahkan dan dikunci. Unggahan baru tidak dapat disimpan pada periode terkunci.
+            Kalender ini telah disahkan dan dikunci. Unggahan baru tidak dapat disimpan pada kalender yang sudah terkunci.
           </Notice>
         )}
 
         {futureBlocked && (
           <Notice error>
-            Periode {filter.period} belum berjalan. Sistem mengunci unggahan untuk bulan masa depan (maksimal periode yang diizinkan: {maxAllowedLabel}).
+            Kalender {filter.period} belum berjalan. Sistem mengunci unggahan untuk bulan mendatang (maksimal kalender
+            yang diizinkan: {maxAllowedLabel}).
           </Notice>
         )}
 
-        <div
-          onDragOver={(event) => {
-            event.preventDefault();
-            if (!disabled) setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            if (event.dataTransfer.files.length > 1) {
-              setError("Unggah satu berkas setiap kali.");
-            } else {
-              void preview(event.dataTransfer.files[0]);
-            }
-          }}
-          className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
-            dragging
-              ? "border-sky-600 bg-sky-100"
-              : disabled
-              ? "border-slate-200 bg-slate-100/70 opacity-75"
-              : "border-slate-300 bg-slate-50"
-          }`}
-        >
-          <UploadCloud className="mx-auto mb-3 text-sky-700" size={36} />
-          <p className="font-semibold text-slate-800">
-            Tarik berkas Company Sales Report ke sini
-          </p>
-          <p className="mb-4 mt-2 text-sm text-slate-500">
-            CSV atau XLSX · maksimal 25 MB · hanya untuk periode berjalan atau sebelumnya
-          </p>
-          <input
-            ref={input}
-            type="file"
-            className="sr-only"
-            accept=".csv,.xlsx"
-            aria-label="Pilih Company Sales Report"
-            disabled={disabled}
-            onChange={(event) => void preview(event.target.files?.[0])}
-          />
-          <button
-            type="button"
-            className={buttonClass}
-            disabled={disabled}
-            onClick={() => input.current?.click()}
+        {isInitialLoading ? (
+          <div className="mt-4 animate-pulse rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+            <div className="mx-auto mb-3 h-9 w-9 rounded-full bg-slate-200" />
+            <div className="mx-auto h-4 w-64 rounded bg-slate-200" />
+            <div className="mx-auto mt-2 h-3.5 w-80 rounded bg-slate-100" />
+            <div className="mx-auto mt-4 h-10 w-32 rounded-lg bg-slate-200" />
+          </div>
+        ) : (
+          <div
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (!disabled) setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              if (event.dataTransfer.files.length > 1) {
+                setError("Unggah satu berkas setiap kali.");
+              } else {
+                void preview(event.dataTransfer.files[0]);
+              }
+            }}
+            className={`mt-4 rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
+              dragging
+                ? "border-sky-600 bg-sky-100"
+                : disabled
+                ? "border-slate-200 bg-slate-100/70 opacity-75"
+                : "border-slate-300 bg-slate-50"
+            }`}
           >
-            {busy ? "Memproses…" : "Pilih berkas"}
-          </button>
-          {fileName && (
-            <p className="mt-3 break-all text-sm font-medium text-slate-700">
-              {fileName}
+            <UploadCloud className="mx-auto mb-3 text-sky-700" size={36} />
+            <p className="font-semibold text-slate-800">Tarik berkas Laporan Penjualan Perusahaan ke sini</p>
+            <p className="mb-4 mt-2 text-sm text-slate-500">
+              CSV atau XLSX · maksimal 25 MB · hanya untuk bulan berjalan atau sebelumnya
             </p>
-          )}
-        </div>
+            <input
+              ref={input}
+              type="file"
+              className="sr-only"
+              accept=".csv,.xlsx"
+              aria-label="Pilih Laporan Penjualan Perusahaan"
+              disabled={disabled}
+              onChange={(event) => void preview(event.target.files?.[0])}
+            />
+            <button
+              type="button"
+              className={buttonClass}
+              disabled={disabled}
+              onClick={() => input.current?.click()}
+            >
+              {busy ? "Memproses…" : "Pilih berkas"}
+            </button>
+            {fileName && <p className="mt-3 break-all text-sm font-medium text-slate-700">{fileName}</p>}
+          </div>
+        )}
+
         <p className="mt-4 text-xs leading-relaxed text-slate-500">
-          Kolom wajib: Periode, Job Number, Company, MAWB No., CW, DEST, Invoice
-          Nominal, DPP (Sub Total), PPN (VAT 11%), PPh 23, Others, DIP IATA, Total Cost,
-          dan Profit.
+          Kolom wajib: Kalender, Nomor Job, Perusahaan, No. MAWB, CW, Tujuan, Nominal Invoice, DPP (Sub Total), PPN (VAT
+          11%), PPh 23, Lain-lain, DIP IATA, Total Biaya, dan Keuntungan.
         </p>
       </Card>
 
@@ -421,7 +408,7 @@ export default function DataUploadPage() {
                 value: money(draftSum("pph23_amount")),
               },
               {
-                label: "5. Others",
+                label: "5. Lain-lain",
                 value: money(draftSum("others_cost")),
               },
               {
@@ -429,12 +416,12 @@ export default function DataUploadPage() {
                 value: money(draftSum("dip_iata_cost")),
               },
               {
-                label: "7. Total Cost Bulanan",
+                label: "7. Total Biaya Bulanan",
                 value: money(draftSum("total_cost")),
               },
               {
-                label: "8. Total Issue",
-                value: `${number(countRecordsIssues(draft.records))} Issue`,
+                label: "8. Total Kendala",
+                value: `${number(countRecordsIssues(draft.records))} Kendala`,
                 alert: countRecordsIssues(draft.records) > 0,
               },
             ]}
@@ -460,44 +447,32 @@ export default function DataUploadPage() {
         </>
       )}
 
-      <Card title="Riwayat Unggahan Periode">
+      <Card title="Riwayat Unggahan Kalender">
         <LoadState
-          loading={history.loading}
-          error={history.error}
+          loading={isInitialLoading || history.loading}
+          error={!isInitialLoading ? history.error : undefined}
           onRetry={history.reload}
-          variant="table"
+          variant="table-inner"
           rows={4}
         />
-        {!history.loading && history.data && <HistoryTable rows={history.data} />}
+        {!isInitialLoading && !history.loading && history.data && <HistoryTable rows={history.data} />}
       </Card>
 
       {confirm && draft && (
         <Modal
-          title="Konfirmasi Penyimpanan Company Sales Report"
+          title="Konfirmasi Penyimpanan Laporan Penjualan Perusahaan"
           onClose={() => setConfirm(false)}
           busy={busy}
         >
           <p className="text-sm leading-relaxed text-slate-700">
-            Simpan <strong>{draft.records.length} baris</strong> dari{" "}
-            <strong>{fileName}</strong> untuk periode{" "}
-            <strong>{draft.period}</strong>? Data biaya dan riwayat unggahan
-            akan disimpan bersama.
+            Simpan <strong>{draft.records.length} baris</strong> dari <strong>{fileName}</strong> untuk kalender{" "}
+            <strong>{draft.period}</strong>? Data biaya dan riwayat unggahan akan disimpan bersama.
           </p>
           <div className="mt-6 flex justify-end gap-3">
-            <button
-              type="button"
-              className={secondaryClass}
-              disabled={busy}
-              onClick={() => setConfirm(false)}
-            >
+            <button type="button" className={secondaryClass} disabled={busy} onClick={() => setConfirm(false)}>
               Kembali ke pratinjau
             </button>
-            <button
-              type="button"
-              className={buttonClass}
-              disabled={busy}
-              onClick={() => void commit()}
-            >
+            <button type="button" className={buttonClass} disabled={busy} onClick={() => void commit()}>
               {busy ? "Menyimpan…" : "Simpan data"}
             </button>
           </div>

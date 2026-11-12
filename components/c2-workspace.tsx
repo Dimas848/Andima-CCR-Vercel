@@ -6,11 +6,13 @@ import { RefreshCw, X } from "lucide-react";
 import Sidebar from "@/components/sidebar";
 import { amount, money, number, timestamp, type Evidence, type MonthlySummary, type SalesRecord } from "@/lib/c2-client";
 
-export const buttonClass = "inline-flex items-center justify-center gap-2 rounded-lg bg-[#087ebd] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#07689c] disabled:cursor-not-allowed disabled:opacity-50";
-export const secondaryClass = "inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50";
-export const fieldClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:outline-2 focus:outline-sky-600 disabled:bg-slate-100";
+export const buttonClass =
+  "inline-flex items-center justify-center gap-2 rounded-lg bg-[#087ebd] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#07689c] disabled:cursor-not-allowed disabled:opacity-50";
+export const secondaryClass =
+  "inline-flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50";
+export const fieldClass =
+  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:outline-2 focus:outline-sky-600 disabled:bg-slate-100";
 
-// Fungsi standar pendeteksi Issue pada setiap baris transaksi sesuai arahan Mas Bram
 export function getRecordIssues(row: SalesRecord): string[] {
   const issues: string[] = [];
   const dpp = amount(row.sub_total);
@@ -24,7 +26,7 @@ export function getRecordIssues(row: SalesRecord): string[] {
   if (iata > 0) issues.push("Terdapat tagihan DIP IATA (seharusnya 0 untuk Andima)");
   const expectedTotal = dpp + vat + pph23 + others + iata;
   if (Math.abs(total - expectedTotal) > 100) {
-    issues.push("Total Cost tidak sesuai penjumlahan komponen");
+    issues.push("Total Biaya tidak sesuai penjumlahan komponen");
   }
   return issues;
 }
@@ -33,7 +35,17 @@ export function countRecordsIssues(records: SalesRecord[]): number {
   return records.filter((r) => getRecordIssues(r).length > 0).length;
 }
 
-export function Workspace({title, description, children, action}: {title: string; description: string; children: ReactNode; action?: ReactNode}) {
+export function Workspace({
+  title,
+  description,
+  children,
+  action,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  action?: ReactNode;
+}) {
   return (
     <div className="min-h-screen bg-[#f3f6fa] text-slate-800">
       <Sidebar />
@@ -54,7 +66,7 @@ export function Workspace({title, description, children, action}: {title: string
   );
 }
 
-export function Card({title, children, action}: {title?: string; children: ReactNode; action?: ReactNode}) {
+export function Card({ title, children, action }: { title?: string; children: ReactNode; action?: ReactNode }) {
   return (
     <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       {title && (
@@ -68,7 +80,7 @@ export function Card({title, children, action}: {title?: string; children: React
   );
 }
 
-export function Notice({children, error = false}: {children: ReactNode; error?: boolean}) {
+export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
   return (
     <div
       role={error ? "alert" : "status"}
@@ -81,15 +93,126 @@ export function Notice({children, error = false}: {children: ReactNode; error?: 
   );
 }
 
+export type SkeletonVariant =
+  | "page"
+  | "dashboard"
+  | "table"
+  | "table-inner"
+  | "cards"
+  | "evidence"
+  | "validation"
+  | "report";
+
+function TableInnerSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="grid grid-cols-7 gap-4 bg-slate-50 px-4 py-3">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="h-3.5 rounded bg-slate-200" />
+        ))}
+      </div>
+      <div className="divide-y divide-slate-100">
+        {Array.from({ length: rows }).map((_, rowIndex) => (
+          <div key={rowIndex} className="grid grid-cols-7 items-center gap-4 px-4 py-3.5">
+            <div className="space-y-1.5">
+              <div className="h-3 w-16 rounded bg-slate-200" />
+              <div className="h-3.5 w-28 rounded bg-slate-100" />
+            </div>
+            {Array.from({ length: 6 }).map((__, colIdx) => (
+              <div key={colIdx} className="ml-auto h-3.5 w-20 rounded bg-slate-100" />
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TableCardSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="h-5 w-56 rounded bg-slate-200" />
+        <div className="h-7 w-28 rounded-full bg-slate-100" />
+      </div>
+      <TableInnerSkeleton rows={rows} />
+    </div>
+  );
+}
+
 export function Skeleton({
   variant = "page",
   rows = 6,
 }: {
-  variant?: "page" | "dashboard" | "table" | "cards";
+  variant?: SkeletonVariant;
   rows?: number;
 }) {
+  if (variant === "table-inner") {
+    return (
+      <div role="status" aria-busy="true" aria-label="Memuat data" className="animate-pulse">
+        <TableInnerSkeleton rows={rows} />
+      </div>
+    );
+  }
+
   return (
     <div role="status" aria-busy="true" aria-label="Memuat data" className="space-y-6 animate-pulse">
+      {variant === "evidence" && (
+        <>
+          <div className="h-11 rounded-lg border border-sky-200 bg-sky-50/70" />
+          <TableCardSkeleton rows={rows} />
+        </>
+      )}
+
+      {variant === "validation" && (
+        <>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="h-5 w-48 rounded bg-slate-200" />
+              <div className="h-6 w-32 rounded-full bg-slate-100" />
+            </div>
+            <div className="space-y-2.5">
+              <div className="h-4 w-2/3 rounded bg-slate-200" />
+              <div className="h-4 w-1/2 rounded bg-slate-100" />
+              <div className="mt-3 h-9 w-44 rounded-lg bg-slate-200" />
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div
+                key={index}
+                className="rounded-xl border border-slate-200 border-t-4 border-t-sky-600/40 bg-white p-4 shadow-sm"
+              >
+                <div className="h-3 w-28 rounded bg-slate-200" />
+                <div className="mt-3 h-7 w-36 rounded bg-slate-200" />
+                <div className="mt-2 h-2.5 w-24 rounded bg-slate-100" />
+              </div>
+            ))}
+          </div>
+          <TableCardSkeleton rows={4} />
+          <TableCardSkeleton rows={3} />
+        </>
+      )}
+
+      {variant === "report" && (
+        <>
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="h-5 w-44 rounded bg-slate-200" />
+              <div className="h-6 w-32 rounded-full bg-slate-100" />
+            </div>
+            <div className="space-y-2">
+              <div className="h-4 w-1/2 rounded bg-slate-200" />
+              <div className="h-4 w-2/3 rounded bg-slate-100" />
+            </div>
+          </div>
+          <TableCardSkeleton rows={4} />
+          <TableCardSkeleton rows={5} />
+          <TableCardSkeleton rows={3} />
+          <TableCardSkeleton rows={3} />
+        </>
+      )}
+
       {(variant === "page" || variant === "dashboard" || variant === "cards") && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: 8 }).map((_, index) => (
@@ -106,32 +229,7 @@ export function Skeleton({
       )}
 
       {(variant === "page" || variant === "dashboard" || variant === "table") && (
-        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="h-5 w-56 rounded bg-slate-200" />
-            <div className="h-7 w-28 rounded-full bg-slate-100" />
-          </div>
-          <div className="overflow-hidden rounded-lg border border-slate-200">
-            <div className="grid grid-cols-7 gap-4 bg-slate-50 px-4 py-3">
-              {Array.from({ length: 7 }).map((_, i) => (
-                <div key={i} className="h-3.5 rounded bg-slate-200" />
-              ))}
-            </div>
-            <div className="divide-y divide-slate-100">
-              {Array.from({ length: rows }).map((_, rowIndex) => (
-                <div key={rowIndex} className="grid grid-cols-7 items-center gap-4 px-4 py-3.5">
-                  <div className="space-y-1.5">
-                    <div className="h-3 w-16 rounded bg-slate-200" />
-                    <div className="h-3.5 w-28 rounded bg-slate-100" />
-                  </div>
-                  {Array.from({ length: 6 }).map((__, colIdx) => (
-                    <div key={colIdx} className="ml-auto h-3.5 w-20 rounded bg-slate-100" />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <TableCardSkeleton rows={rows} />
       )}
     </div>
   );
@@ -147,7 +245,7 @@ export function LoadState({
   loading: boolean;
   error?: string;
   onRetry?: () => void;
-  variant?: "page" | "dashboard" | "table" | "cards";
+  variant?: SkeletonVariant;
   rows?: number;
 }) {
   if (error) {
@@ -196,7 +294,7 @@ export function Filters({
   loading?: boolean;
 }) {
   const options = [...new Set([period, ...periods].filter(Boolean))];
-  const companyOptions = [...new Map((companies ?? []).map(row => [row.company_name, row])).values()];
+  const companyOptions = [...new Map((companies ?? []).map((row) => [row.company_name, row])).values()];
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <label className="min-w-44 flex-1 text-xs font-semibold text-slate-600">
@@ -205,12 +303,12 @@ export function Filters({
           className={`${fieldClass} mt-1.5`}
           value={period}
           disabled={loading && !options.length}
-          onChange={event => onPeriod(event.target.value)}
+          onChange={(event) => onPeriod(event.target.value)}
         >
           <option value="" disabled>
             {loading && !options.length ? "Memuat periode…" : "Pilih periode"}
           </option>
-          {options.map(value => (
+          {options.map((value) => (
             <option key={value}>{value}</option>
           ))}
         </select>
@@ -218,12 +316,12 @@ export function Filters({
       {onCompany && (
         <label className="min-w-60 flex-[2] text-xs font-semibold text-slate-600">
           Perusahaan
-          <select className={`${fieldClass} mt-1.5`} value={company} onChange={event => onCompany(event.target.value)}>
+          <select className={`${fieldClass} mt-1.5`} value={company} onChange={(event) => onCompany(event.target.value)}>
             <option value="ALL">Semua perusahaan</option>
-            {company !== "ALL" && company && !companyOptions.some(row => row.company_name === company) && (
+            {company !== "ALL" && company && !companyOptions.some((row) => row.company_name === company) && (
               <option value={company}>{company}</option>
             )}
-            {companyOptions.map(row => (
+            {companyOptions.map((row) => (
               <option key={row.customer_code} value={row.company_name}>
                 {row.customer_code} · {row.company_name}
               </option>
@@ -234,9 +332,9 @@ export function Filters({
       {onDest && (
         <label className="min-w-44 flex-1 text-xs font-semibold text-slate-600">
           Kota / destinasi
-          <select className={`${fieldClass} mt-1.5`} value={dest} onChange={event => onDest(event.target.value)}>
+          <select className={`${fieldClass} mt-1.5`} value={dest} onChange={(event) => onDest(event.target.value)}>
             <option value="ALL">Semua destinasi</option>
-            {[...new Set([...(dest && dest !== "ALL" ? [dest] : []), ...(destinations ?? [])])].map(value => (
+            {[...new Set([...(dest && dest !== "ALL" ? [dest] : []), ...(destinations ?? [])])].map((value) => (
               <option key={value}>{value}</option>
             ))}
           </select>
@@ -252,11 +350,11 @@ export function Filters({
 }
 
 // Grid KPI mendukung 8 Tile (4 kolom x 2 baris di layar lebar)
-export function Kpis({items}: {items: {label: string; value: ReactNode; detail?: string; alert?: boolean}[]}) {
+export function Kpis({ items }: { items: { label: string; value: ReactNode; detail?: string; alert?: boolean }[] }) {
   const gridCols = items.length === 8 ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 xl:grid-cols-5";
   return (
     <div className={`grid gap-3 ${gridCols}`}>
-      {items.map(item => (
+      {items.map((item) => (
         <div
           key={item.label}
           className={`rounded-xl border border-slate-200 border-t-4 bg-white p-4 shadow-sm ${
@@ -274,7 +372,7 @@ export function Kpis({items}: {items: {label: string; value: ReactNode; detail?:
   );
 }
 
-export function Status({validated}: {validated: boolean}) {
+export function Status({ validated }: { validated: boolean }) {
   return (
     <span
       className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
@@ -286,7 +384,7 @@ export function Status({validated}: {validated: boolean}) {
   );
 }
 
-export type Column<T> = {label: string; cell: (row: T) => ReactNode; numeric?: boolean};
+export type Column<T> = { label: string; cell: (row: T) => ReactNode; numeric?: boolean };
 export function DataTable<T>({
   rows,
   columns,
@@ -307,7 +405,7 @@ export function DataTable<T>({
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs text-slate-600">
             <tr>
-              {columns.map(column => (
+              {columns.map((column) => (
                 <th
                   scope="col"
                   key={column.label}
@@ -321,7 +419,7 @@ export function DataTable<T>({
           <tbody className="divide-y divide-slate-100">
             {rows.slice((active - 1) * 15, active * 15).map((row, index) => (
               <tr key={rowKey(row, index)} className="hover:bg-sky-50/40">
-                {columns.map(column => (
+                {columns.map((column) => (
                   <td
                     key={column.label}
                     className={`px-4 py-3 ${column.numeric ? "whitespace-nowrap text-right tabular-nums" : "text-left"}`}
@@ -350,7 +448,12 @@ export function DataTable<T>({
             <button type="button" className={secondaryClass} disabled={active === 1} onClick={() => setPage(active - 1)}>
               Sebelumnya
             </button>
-            <button type="button" className={secondaryClass} disabled={active === pages} onClick={() => setPage(active + 1)}>
+            <button
+              type="button"
+              className={secondaryClass}
+              disabled={active === pages}
+              onClick={() => setPage(active + 1)}
+            >
               Berikutnya
             </button>
           </div>
@@ -361,97 +464,118 @@ export function DataTable<T>({
 }
 
 export const salesColumns: Column<SalesRecord>[] = [
-  {label: "Periode", cell: row => row.periode},
-  {label: "Job Number", cell: row => row.job_number},
-  {label: "Perusahaan", cell: row => row.company_name},
-  {label: "MAWB No.", cell: row => row.mawb_no},
-  {label: "CW", cell: row => number(row.cw), numeric: true},
-  {label: "DEST", cell: row => row.dest},
-  {label: "DPP (Dasar Pajak)", cell: row => money(row.sub_total), numeric: true},
-  {label: "PPN (VAT 11%)", cell: row => money(row.vat_amount), numeric: true},
-  {label: "PPh 23 (2%)", cell: row => money(row.pph23_amount), numeric: true},
-  {label: "Others", cell: row => money(row.others_cost), numeric: true},
-  {label: "DIP IATA", cell: row => money(row.dip_iata_cost), numeric: true},
-  {label: "Total Cost", cell: row => <strong>{money(row.total_cost)}</strong>, numeric: true},
+  { label: "Periode", cell: (row) => row.periode },
+  { label: "Nomor Job", cell: (row) => row.job_number },
+  { label: "Perusahaan", cell: (row) => row.company_name },
+  { label: "No. MAWB", cell: (row) => row.mawb_no },
+  { label: "CW", cell: (row) => number(row.cw), numeric: true },
+  { label: "Tujuan", cell: (row) => row.dest },
+  { label: "DPP (Dasar Pajak)", cell: (row) => money(row.sub_total), numeric: true },
+  { label: "PPN (VAT 11%)", cell: (row) => money(row.vat_amount), numeric: true },
+  { label: "PPh 23 (2%)", cell: (row) => money(row.pph23_amount), numeric: true },
+  { label: "Lain-lain", cell: (row) => money(row.others_cost), numeric: true },
+  { label: "DIP IATA", cell: (row) => money(row.dip_iata_cost), numeric: true },
+  { label: "Total Biaya", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
   {
-    label: "Issue",
-    cell: row => {
+    label: "Kendala",
+    cell: (row) => {
       const issues = getRecordIssues(row);
       return issues.length === 0 ? (
         <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-          0 Issue
+          0 Kendala
         </span>
       ) : (
         <span
           title={issues.join(", ")}
           className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800"
         >
-          {issues.length} Issue ({issues[0]})
+          {issues.length} Kendala ({issues[0]})
         </span>
       );
     },
   },
 ];
 
-export function SalesTable({records}: {records: SalesRecord[]}) {
-  return <DataTable rows={records} columns={salesColumns} rowKey={(row, index) => row.record_id ?? `${row.job_number}-${index}`} />;
+export function SalesTable({ records }: { records: SalesRecord[] }) {
+  return (
+    <DataTable
+      rows={records}
+      columns={salesColumns}
+      rowKey={(row, index) => row.record_id ?? `${row.job_number}-${index}`}
+    />
+  );
 }
 
-export function SummaryTable({rows, detail}: {rows: MonthlySummary[]; detail?: (row: MonthlySummary) => void}) {
+export function SummaryTable({ rows, detail }: { rows: MonthlySummary[]; detail?: (row: MonthlySummary) => void }) {
   const columns: Column<MonthlySummary>[] = [
     {
       label: "Perusahaan",
-      cell: row => (
+      cell: (row) => (
         <>
           <span className="text-xs font-semibold text-sky-700">{row.customer_code}</span>
           <p className="min-w-52 font-medium">{row.company_name}</p>
         </>
       ),
     },
-    {label: "Job", cell: row => number(row.total_jobs_count), numeric: true},
-    {label: "DPP (Dasar Pajak)", cell: row => money(row.sum_sub_total), numeric: true},
-    {label: "PPN (VAT 11%)", cell: row => money(row.sum_vat), numeric: true},
-    {label: "PPh 23 (2%)", cell: row => money(row.sum_pph23), numeric: true},
-    {label: "Others", cell: row => money(row.sum_others), numeric: true},
-    {label: "DIP IATA", cell: row => money(row.sum_dip_iata), numeric: true},
-    {label: "Total Cost", cell: row => <strong>{money(row.sum_total_cost)}</strong>, numeric: true},
-    {label: "Porsi Periode", cell: row => `${number(row.company_share_pct)}%`, numeric: true},
+    { label: "Job", cell: (row) => number(row.total_jobs_count), numeric: true },
+    { label: "DPP (Dasar Pajak)", cell: (row) => money(row.sum_sub_total), numeric: true },
+    { label: "PPN (VAT 11%)", cell: (row) => money(row.sum_vat), numeric: true },
+    { label: "PPh 23 (2%)", cell: (row) => money(row.sum_pph23), numeric: true },
+    { label: "Lain-lain", cell: (row) => money(row.sum_others), numeric: true },
+    { label: "DIP IATA", cell: (row) => money(row.sum_dip_iata), numeric: true },
+    { label: "Total Biaya", cell: (row) => <strong>{money(row.sum_total_cost)}</strong>, numeric: true },
+    { label: "Porsi Periode", cell: (row) => `${number(row.company_share_pct)}%`, numeric: true },
   ];
   if (detail) {
     columns.push({
       label: "Rincian",
-      cell: row => (
+      cell: (row) => (
         <button type="button" className="font-semibold text-sky-700 underline" onClick={() => detail(row)}>
           Lihat rincian
         </button>
       ),
     });
   }
-  return <DataTable rows={rows} columns={columns} rowKey={row => `${row.periode}-${row.customer_code}`} />;
+  return <DataTable rows={rows} columns={columns} rowKey={(row) => `${row.periode}-${row.customer_code}`} />;
 }
 
-export function HistoryTable({rows, onPreview, onDelete}: {rows: Evidence[]; onPreview?: (row: Evidence) => void; onDelete?: (row: Evidence) => void}) {
+export function HistoryTable({
+  rows,
+  onPreview,
+  onDelete,
+}: {
+  rows: Evidence[];
+  onPreview?: (row: Evidence) => void;
+  onDelete?: (row: Evidence) => void;
+}) {
   const columns: Column<Evidence>[] = [
-    {label: "Dokumen", cell: row => <span className="break-all font-medium">{row.file_name}</span>},
-    {label: "Periode", cell: row => row.period_month},
-    {label: "Waktu Unggah", cell: row => <time dateTime={row.uploaded_at} title={row.uploaded_at}>{timestamp(row.uploaded_at)}</time>},
+    { label: "Dokumen", cell: (row) => <span className="break-all font-medium">{row.file_name}</span> },
+    { label: "Periode", cell: (row) => row.period_month },
+    {
+      label: "Waktu Unggah",
+      cell: (row) => (
+        <time dateTime={row.uploaded_at} title={row.uploaded_at}>
+          {timestamp(row.uploaded_at)}
+        </time>
+      ),
+    },
     {
       label: "Diunggah Oleh",
-      cell: row => (
+      cell: (row) => (
         <>
           {row.uploaded_by_name || "Belum tercatat"}
           <p className="text-xs text-slate-500">{row.uploaded_by_role || "Peran belum tercatat"}</p>
         </>
       ),
     },
-    {label: "Baris", cell: row => number(row.total_rows), numeric: true},
-    {label: "Total Cost", cell: row => money(row.total_cost_amount), numeric: true},
-    {label: "Status", cell: row => row.status},
+    { label: "Baris", cell: (row) => number(row.total_rows), numeric: true },
+    { label: "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
+    { label: "Status", cell: (row) => row.status },
   ];
   if (onPreview || onDelete) {
     columns.push({
       label: "Tindakan",
-      cell: row => (
+      cell: (row) => (
         <div className="flex gap-3">
           {onPreview && (
             <button type="button" className="text-sky-700 underline" onClick={() => onPreview(row)}>
@@ -472,10 +596,20 @@ export function HistoryTable({rows, onPreview, onDelete}: {rows: Evidence[]; onP
       ),
     });
   }
-  return <DataTable rows={rows} columns={columns} rowKey={row => row.upload_id} />;
+  return <DataTable rows={rows} columns={columns} rowKey={(row) => row.upload_id} />;
 }
 
-export function Modal({title, children, onClose, busy = false}: {title: string; children: ReactNode; onClose: () => void; busy?: boolean}) {
+export function Modal({
+  title,
+  children,
+  onClose,
+  busy = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose: () => void;
+  busy?: boolean;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -487,7 +621,7 @@ export function Modal({title, children, onClose, busy = false}: {title: string; 
     <dialog
       ref={dialog}
       aria-labelledby={id}
-      onCancel={event => {
+      onCancel={(event) => {
         event.preventDefault();
         if (!busy) onClose();
       }}

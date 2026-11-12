@@ -33,6 +33,42 @@ import {
   type UserInfo,
 } from "@/lib/c2-client";
 
+function ValidationSkeleton() {
+  return (
+    <>
+      <Card title="Status Periode">
+        <div className="animate-pulse space-y-3">
+          <div className="h-4 w-2/3 rounded bg-slate-200" />
+          <div className="h-4 w-1/2 rounded bg-slate-200" />
+          <div className="h-4 w-1/3 rounded bg-slate-200" />
+          <div className="mt-2 h-9 w-44 rounded-lg bg-slate-200" />
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 8 }).map((_, idx) => (
+          <div
+            key={idx}
+            className="animate-pulse rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+          >
+            <div className="h-3.5 w-2/3 rounded bg-slate-200" />
+            <div className="mt-3 h-6 w-1/2 rounded bg-slate-200" />
+            <div className="mt-2 h-3 w-3/4 rounded bg-slate-200" />
+          </div>
+        ))}
+      </div>
+
+      <Card title="Pemeriksaan Stempel Waktu Bukti Dokumen">
+        <LoadState loading variant="table" rows={4} />
+      </Card>
+
+      <Card title="Jejak Audit Pengesahan">
+        <LoadState loading variant="table" rows={3} />
+      </Card>
+    </>
+  );
+}
+
 export default function ValidationPage() {
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
@@ -54,6 +90,7 @@ export default function ValidationPage() {
 
   const data = result.data;
   const isLoading = filter.loading || result.loading || user.loading;
+  const loadError = filter.error || result.error || user.error;
   const locked = Boolean(data?.validation?.is_validated);
 
   const sum = (
@@ -89,8 +126,8 @@ export default function ValidationPage() {
 
   return (
     <Workspace
-      title="Validasi & Penguncian Periode (Validation)"
-      description="Periksa keselarasan ke-8 indikator biaya, pajak, dan evidence sebelum mengesahkan serta mengunci periode secara permanen."
+      title="Validation"
+      description="Periksa keselarasan ke-8 indikator biaya, pajak, dan bukti dokumen sebelum mengesahkan serta mengunci periode secara permanen."
     >
       <Filters
         {...filter}
@@ -109,24 +146,27 @@ export default function ValidationPage() {
         }}
       />
 
-      <LoadState
-        loading={isLoading}
-        error={filter.error || result.error || user.error}
-        onRetry={() => {
-          result.reload();
-          user.reload();
-        }}
-        variant="page"
-      />
+      {!isLoading && loadError && (
+        <LoadState
+          loading={false}
+          error={loadError}
+          onRetry={() => {
+            result.reload();
+            user.reload();
+          }}
+        />
+      )}
 
       {notice && <Notice>{notice}</Notice>}
       {error && !confirm && <Notice error>{error}</Notice>}
 
-      {!isLoading && !filter.period && !filter.error && (
+      {isLoading && <ValidationSkeleton />}
+
+      {!isLoading && !loadError && !filter.period && (
         <Notice>Belum ada periode yang dapat diperiksa.</Notice>
       )}
 
-      {!isLoading && data && (
+      {!isLoading && !loadError && data && (
         <>
           <Card title={`Status Periode · ${filter.period}`} action={<Status validated={locked} />}>
             <p className="text-sm">
@@ -135,7 +175,7 @@ export default function ValidationPage() {
                     (total, row) => total + Number(row.total_jobs_count),
                     0
                   )} rincian biaya.`
-                : "Belum ada Company Sales Report pada periode ini."}
+                : "Belum ada Laporan Penjualan Perusahaan pada periode ini."}
             </p>
             {locked ? (
               <div className="mt-4 space-y-2 text-sm">
@@ -165,61 +205,64 @@ export default function ValidationPage() {
                   </button>
                 ) : (
                   <p className="text-sm text-slate-500">
-                    Pengesahan tersedia untuk Manager of Accounting, Tax Manager, dan Director of FAT.
+                    Pengesahan tersedia untuk Manager of Accounting, Tax Manager, dan Director of Finance, Accounting &amp; Digital Transformation.
                   </p>
                 )}
               </div>
             )}
           </Card>
 
-          {/* 8 Tile Baku sesuai Revisi Mas Bram (Sama persis dengan Dashboard, Customer Cost, & Tax Tracing) */}
           <Kpis
             items={[
               { label: "1. Total Perusahaan", value: number(data.companies.length), detail: "Pelanggan dalam periode" },
               { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(sum("sum_sub_total")), detail: "Basis perhitungan pajak" },
               { label: "3. PPN (VAT 11%)", value: money(sum("sum_vat")), detail: "Pajak Pertambahan Nilai" },
               { label: "4. PPh 23 (2%)", value: money(sum("sum_pph23")), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Others", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
+              { label: "5. Lain-lain", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
               { label: "6. DIP IATA", value: money(sum("sum_dip_iata")), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Cost Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
+              { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Issue",
-                value: `${number(issueCount)} Issue`,
-                detail: issueCount > 0 ? "Terdapat catatan ketidaksesuaian" : "Seluruh transaksi sesuai",
-                alert: issueCount > 0,
+                label: "8. Total Kendala",
+                value: details.loading ? "Memuat…" : `${number(issueCount)} Kendala`,
+                detail: details.loading
+                  ? "Memeriksa transaksi"
+                  : issueCount > 0
+                  ? "Terdapat catatan ketidaksesuaian"
+                  : "Seluruh transaksi sesuai",
+                alert: !details.loading && issueCount > 0,
               },
             ]}
           />
 
-          <Card title="Pemeriksaan Timestamp Evidence">
+          <Card title="Pemeriksaan Stempel Waktu Bukti Dokumen">
             <HistoryTable rows={data.history} />
+          </Card>
+
+          <Card title="Jejak Audit Pengesahan">
+            <LoadState
+              loading={audit.loading}
+              error={audit.error}
+              onRetry={audit.reload}
+              variant="table"
+              rows={3}
+            />
+            {!audit.loading && audit.data && (
+              <DataTable
+                rows={audit.data}
+                rowKey={(row) => row.log_id}
+                columns={[
+                  { label: "Waktu", cell: (row) => timestamp(row.action_timestamp) },
+                  { label: "Pengesah", cell: (row) => row.actor_name || "Belum tercatat" },
+                  { label: "Jabatan", cell: (row) => row.actor_role || "Belum tercatat" },
+                  { label: "Tindakan", cell: (row) => row.action_type },
+                  { label: "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
+                  { label: "Catatan", cell: (row) => row.validation_notes || "—" },
+                ]}
+              />
+            )}
           </Card>
         </>
       )}
-
-      <Card title="Jejak Audit Pengesahan">
-        <LoadState
-          loading={audit.loading}
-          error={audit.error}
-          onRetry={audit.reload}
-          variant="table"
-          rows={3}
-        />
-        {!audit.loading && audit.data && (
-          <DataTable
-            rows={audit.data}
-            rowKey={(row) => row.log_id}
-            columns={[
-              { label: "Waktu", cell: (row) => timestamp(row.action_timestamp) },
-              { label: "Validator", cell: (row) => row.actor_name || "Belum tercatat" },
-              { label: "Jabatan", cell: (row) => row.actor_role || "Belum tercatat" },
-              { label: "Tindakan", cell: (row) => row.action_type },
-              { label: "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
-              { label: "Catatan", cell: (row) => row.validation_notes || "—" },
-            ]}
-          />
-        )}
-      </Card>
 
       {confirm && data && (
         <Modal
@@ -228,8 +271,8 @@ export default function ValidationPage() {
           busy={busy}
         >
           <Notice>
-            Setelah disahkan, biaya, evidence, dan status periode ini tidak dapat diubah. Total biaya yang diperiksa:{" "}
-            {money(sum("sum_total_cost"))} ({issueCount} Issue terdeteksi).
+            Setelah disahkan, rincian biaya, bukti dokumen, dan status periode ini tidak dapat diubah. Total biaya yang diperiksa:{" "}
+            {money(sum("sum_total_cost"))} ({issueCount} kendala terdeteksi).
           </Notice>
           <label className="block text-sm font-medium">
             Catatan pengesahan

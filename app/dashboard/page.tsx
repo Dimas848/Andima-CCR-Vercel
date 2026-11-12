@@ -39,7 +39,7 @@ const colors = [
 
 function DashboardSkeleton() {
   return (
-    <div role="status" aria-busy="true" aria-label="Memuat dashboard" className="space-y-6 animate-pulse">
+    <div role="status" aria-busy="true" aria-label="Memuat dasbor" className="space-y-6 animate-pulse">
       {/* 1. Skeleton Badge Status & Periode */}
       <div className="flex items-center gap-3">
         <div className="h-6 w-32 rounded-full bg-slate-200" />
@@ -60,7 +60,7 @@ function DashboardSkeleton() {
         ))}
       </div>
 
-      {/* 3. Skeleton Grid 2 Kolom: Company Cost Share (%) & Breakdown Cost per Customer */}
+      {/* 3. Skeleton Grid 2 Kolom: Porsi Biaya & Perbandingan per Pelanggan */}
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 h-5 w-48 rounded bg-slate-200" />
@@ -206,11 +206,11 @@ export default function DashboardPage() {
 
   return (
     <Workspace
-      title="Dasbor Eksekutif Biaya (Dashboard)"
-      description="Ringkasan 8 indikator biaya bulanan, porsi perusahaan, dan status validasi dari Company Sales Report."
+      title="Dashboard"
+      description="Ringkasan 8 indikator biaya bulanan, porsi perusahaan, dan status validasi dari Laporan Penjualan Perusahaan."
       action={
         <Link href="/data-upload" className={buttonClass}>
-          Unggah Company Sales Report
+          Unggah Laporan Penjualan
         </Link>
       }
     >
@@ -243,21 +243,24 @@ export default function DashboardPage() {
             <span className="font-medium text-slate-500">{filter.period}</span>
           </div>
 
-          {/* 8 Tile Baku sesuai Revisi Mas Bram (Selaras dengan Customer Cost, Tax Tracing, & Validation) */}
           <Kpis
             items={[
               { label: "1. Total Perusahaan", value: number(rows.length), detail: "Pelanggan aktif periode ini" },
               { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(sum("sum_sub_total")), detail: "Basis perhitungan pajak" },
               { label: "3. PPN (VAT 11%)", value: money(sum("sum_vat")), detail: "Pajak Pertambahan Nilai" },
               { label: "4. PPh 23 (2%)", value: money(sum("sum_pph23")), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Others", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
+              { label: "5. Lain-lain", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
               { label: "6. DIP IATA", value: money(sum("sum_dip_iata")), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Cost Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
+              { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Issue",
-                value: `${number(issueCount)} Issue`,
-                detail: issueCount > 0 ? "Perlu pemeriksaan pada rincian" : "Seluruh transaksi sesuai",
-                alert: issueCount > 0,
+                label: "8. Total Kendala",
+                value: details.loading ? "Memuat…" : `${number(issueCount)} Kendala`,
+                detail: details.loading
+                  ? "Memeriksa transaksi"
+                  : issueCount > 0
+                  ? "Perlu pemeriksaan pada rincian"
+                  : "Seluruh transaksi sesuai",
+                alert: !details.loading && issueCount > 0,
               },
             ]}
           />
