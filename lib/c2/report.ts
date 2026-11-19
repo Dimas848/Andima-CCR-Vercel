@@ -26,18 +26,32 @@ export async function buildCostCsv(records: Record<string, unknown>[], period: s
   await parseCompanySalesReport(bytes, 'report.csv', period);
   return bytes;
 }
+
 function requiredText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Laporan tidak lengkap: ${field}.`);
   return value;
 }
+
 function amount(value: unknown, field: string): number {
   if ((typeof value !== 'string' && typeof value !== 'number') || value === '' || !Number.isFinite(Number(value))) throw new Error(`Nominal laporan tidak valid: ${field}.`);
   return Number(value);
 }
-function timestamp(value: unknown): Date {
+
+function formatWibTimestamp(value: unknown): string {
   const date = new Date(requiredText(value, 'timestamp'));
   if (Number.isNaN(date.valueOf())) throw new Error('Timestamp laporan tidak valid.');
-  return date;
+  return `${new Intl.DateTimeFormat('id-ID', {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+    timeZone: 'Asia/Jakarta',
+  }).format(date)} WIB`;
+}
+
+function formatActor(nameValue: unknown, roleValue: unknown, field: string): string {
+  const name = requiredText(nameValue, field).trim();
+  const role = typeof roleValue === 'string' ? roleValue.trim() : '';
+  if (!role || name.includes(`(${role})`)) return name;
+  return `${name} (${role})`;
 }
 
 export async function buildCostWorkbook(input: CostReportInput): Promise<Buffer> {
@@ -80,20 +94,22 @@ export async function buildCostWorkbook(input: CostReportInput): Promise<Buffer>
   evidence.columns = [
     { header: 'Nama Dokumen', key: 'file_name', width: 48 },
     { header: 'Periode', key: 'period_month', width: 20 },
-    { header: 'Waktu Unggah (UTC)', key: 'uploaded_at', width: 28, style: { numFmt: 'yyyy-mm-dd hh:mm:ss.000' } },
-    { header: 'Diunggah Oleh', key: 'uploaded_by_name', width: 32 },
+    { header: 'Waktu Unggah (WIB)', key: 'uploaded_at', width: 28 },
+    { header: 'Diunggah Oleh', key: 'uploaded_by_name', width: 42 },
     { header: 'Status Validation', key: 'validation_status', width: 24 },
-    { header: 'Divalidasi Oleh', key: 'validated_by', width: 32 },
-    { header: 'Waktu Validasi (UTC)', key: 'validated_at', width: 28, style: { numFmt: 'yyyy-mm-dd hh:mm:ss.000' } },
+    { header: 'Divalidasi Oleh', key: 'validated_by', width: 42 },
+    { header: 'Waktu Validasi (WIB)', key: 'validated_at', width: 28 },
   ];
   for (const item of input.evidence) {
     if (item.period_month !== input.period) throw new Error('Evidence berasal dari periode berbeda.');
     evidence.addRow({
-      file_name: requiredText(item.file_name, 'file_name'), period_month: input.period,
-      uploaded_at: timestamp(item.uploaded_at),
-      uploaded_by_name: requiredText(item.uploaded_by_name, 'uploaded_by_name'),
-      validation_status: 'Validated', validated_by: requiredText(input.validation.validated_by, 'validated_by'),
-      validated_at: timestamp(input.validation.validated_at),
+      file_name: requiredText(item.file_name, 'file_name'),
+      period_month: input.period,
+      uploaded_at: formatWibTimestamp(item.uploaded_at),
+      uploaded_by_name: formatActor(item.uploaded_by_name, item.uploaded_by_role, 'uploaded_by_name'),
+      validation_status: 'Validated',
+      validated_by: formatActor(input.validation.validated_by, input.validation.validated_by_role, 'validated_by'),
+      validated_at: formatWibTimestamp(input.validation.validated_at),
     });
   }
   for (const sheet of workbook.worksheets) {
