@@ -4,7 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
-import { ChevronDown, ChevronLeft, ChevronRight, Menu, X } from "lucide-react";
+import { ChevronDown, Menu, X } from "lucide-react";
 
 type SidebarProps = {
   userName?: string;
@@ -194,21 +194,21 @@ export default function Sidebar({
           <button
             type="button"
             onClick={() => setIsSidebarOpen(true)}
-            className="rounded-lg bg-[#0f2342] p-2 text-white lg:hidden"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:hidden"
             aria-label="Buka navigasi"
           >
-            <Menu size={18} />
+            <Menu size={16} />
           </button>
 
           {isCollapsed && (
             <button
               type="button"
               onClick={toggleCollapse}
-              className="hidden h-8 w-8 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:inline-flex"
+              className="hidden h-8 w-8 items-center justify-center rounded-lg bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:inline-flex"
               aria-label="Tampilkan sidebar"
               title="Tampilkan sidebar"
             >
-              <ChevronRight size={16} />
+              <Menu size={16} />
             </button>
           )}
 
@@ -253,11 +253,22 @@ export default function Sidebar({
               <p className="text-xs text-[#d9e2fc]/80">Logistics Suite</p>
             </div>
           </div>
+
           <button
             type="button"
             onClick={() => setIsSidebarOpen(false)}
-            className="rounded p-1 text-[#d9e2fc] hover:bg-white/10 lg:hidden"
+            className="rounded-md p-1.5 text-[#d9e2fc]/80 transition-colors hover:bg-white/10 hover:text-white lg:hidden"
             aria-label="Tutup navigasi"
+          >
+            <X size={18} />
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className="hidden rounded-md p-1.5 text-[#d9e2fc]/80 transition-colors hover:bg-white/10 hover:text-white lg:inline-flex"
+            aria-label="Sembunyikan sidebar"
+            title="Sembunyikan sidebar"
           >
             <X size={18} />
           </button>
@@ -265,28 +276,14 @@ export default function Sidebar({
 
         <nav className="mt-8 space-y-1.5 text-sm font-semibold">
           <div>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setIsCcrOpen((value) => !value)}
-                className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
-              >
-                <span className="flex items-center gap-3">CCR</span>
-                <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />
-              </button>
-
-              {!isCollapsed && (
-                <button
-                  type="button"
-                  onClick={toggleCollapse}
-                  className="absolute left-[calc(100%+6px)] top-1/2 hidden h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:flex"
-                  aria-label="Sembunyikan sidebar"
-                  title="Sembunyikan sidebar"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsCcrOpen((value) => !value)}
+              className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
+            >
+              <span className="flex items-center gap-3">CCR</span>
+              <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />
+            </button>
 
             {isCcrOpen && (
               <div className="ml-5 mt-2 border-l border-[#d9e2fc]/20 pl-3">
