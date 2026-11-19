@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
 import {
   Workspace,
   Filters,
@@ -33,6 +34,11 @@ interface ReportHistory {
   created_at: string;
 }
 
+// Cache ringan per periode & filter agar perpindahan halaman/filter tampil instan
+const reportOptionsCache = new Map<string, CustomerData>();
+const reportPreviewCache = new Map<string, ReportData>();
+const reportHistoryCache = new Map<string, ReportHistory[]>();
+
 export default function ReportPage() {
   const filter = usePeriod();
   const [company, setCompany] = useFilter("company");
@@ -50,9 +56,38 @@ export default function ReportPage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const isLoading = filter.loading || result.loading;
+  const cacheKey = filter.period ? `${filter.period}|${company}` : "";
+
+  useEffect(() => {
+    if (filter.period && options.data) {
+      reportOptionsCache.set(filter.period, options.data);
+    }
+  }, [filter.period, options.data]);
+
+  useEffect(() => {
+    if (cacheKey && result.data) {
+      reportPreviewCache.set(cacheKey, result.data);
+    }
+  }, [cacheKey, result.data]);
+
+  useEffect(() => {
+    if (filter.period && history.data) {
+      reportHistoryCache.set(filter.period, history.data);
+    }
+  }, [filter.period, history.data]);
+
+  const optionsData = options.data ?? (filter.period ? reportOptionsCache.get(filter.period) : undefined);
+  const data =
+    result.data ??
+    (cacheKey ? reportPreviewCache.get(cacheKey) : undefined) ??
+    (filter.period ? reportPreviewCache.get(`${filter.period}|ALL`) : undefined);
+  const historyData = history.data ?? (filter.period ? reportHistoryCache.get(filter.period) : undefined);
+
   const loadError = filter.error || result.error || options.error;
-  const isValidated = Boolean(result.data?.validation?.is_validated);
+  const isLoading = !data && !loadError && (filter.loading || result.loading);
+  const isRefreshing = filter.loading || result.loading || options.loading || history.loading;
+  const isHistoryLoading = !historyData && history.loading;
+  const isValidated = Boolean(data?.validation?.is_validated);
 
   async function download(format: "xlsx" | "csv", previous?: ReportHistory) {
     if (busy || (!previous && !isValidated)) return;
@@ -96,6 +131,7 @@ export default function ReportPage() {
       setNotice(
         `${format === "xlsx" ? "Berkas Excel tiga lembar" : "Berkas CSV rincian 14 kolom"} berhasil dibuat dan unduhan dimulai.`
       );
+      if (filter.period) reportHistoryCache.delete(filter.period);
       history.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unduhan gagal.");
@@ -126,16 +162,17 @@ export default function ReportPage() {
     >
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setError(undefined);
           setNotice(undefined);
         }}
         company={company}
-        companies={options.data?.companies}
+        companies={optionsData?.companies}
         onCompany={setCompany}
         refresh={() => {
+          filter.reload();
           result.reload();
           options.reload();
           history.reload();
@@ -156,28 +193,28 @@ export default function ReportPage() {
         <Notice>Belum ada periode laporan. Unggah dan validasi Laporan Penjualan Perusahaan terlebih dahulu.</Notice>
       )}
 
-      {!isLoading && !loadError && result.data && (
+      {!isLoading && !loadError && data && (
         <>
           <Card title="Pengesahan Periode" action={<Status validated={isValidated} />}>
             <p className="text-sm">
-              {result.data.validation?.validated_by || "Identitas pengesah belum tercatat"} ·{" "}
-              {timestamp(result.data.validation?.validated_at)}
+              {data.validation?.validated_by || "Identitas pengesah belum tercatat"} ·{" "}
+              {timestamp(data.validation?.validated_at)}
             </p>
             <p className="mt-2 text-sm text-slate-500">
-              {result.data.validation?.validation_notes || "Tidak ada catatan pengesahan."}
+              {data.validation?.validation_notes || "Tidak ada catatan pengesahan."}
             </p>
           </Card>
 
           <Card title="Pratinjau Ringkasan Biaya, Persentase, Pajak, dan Keuntungan">
-            <SummaryTable rows={result.data.companies} />
+            <SummaryTable rows={data.companies} />
           </Card>
 
           <Card title="Pratinjau Rincian CSV · 14 Kolom Unggah Data">
-            <SalesTable records={result.data.records} />
+            <SalesTable records={data.records} />
           </Card>
 
           <Card title="Riwayat Stempel Waktu Bukti Dokumen">
-            <HistoryTable rows={result.data.evidence} />
+            <HistoryTable rows={data.evidence} />
           </Card>
 
           <Notice>
@@ -195,15 +232,15 @@ export default function ReportPage() {
       {!isLoading && (
         <Card title="Riwayat Pembuatan Laporan">
           <LoadState
-            loading={history.loading}
+            loading={isHistoryLoading}
             error={history.error}
             onRetry={history.reload}
             variant="table-inner"
             rows={3}
           />
-          {!history.loading && history.data && (
+          {!isHistoryLoading && historyData && (
             <DataTable
-              rows={history.data}
+              rows={historyData}
               rowKey={(row) => row.report_id}
               columns={[
                 { label: "Laporan", cell: (row) => row.report_type },

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import Link from "next/link";
 import { UploadCloud } from "lucide-react";
 import {
@@ -47,6 +47,11 @@ const MONTHS_ID = [
   "November",
   "Desember",
 ];
+
+// Cache ringan per periode & akun agar perpindahan halaman/periode tampil instan
+let cachedUser: UserInfo | undefined;
+const statusCache = new Map<string, ValidationData>();
+const historyCache = new Map<string, Evidence[]>();
 
 function getCurrentMaxMonth(): string {
   const now = new Date();
@@ -169,6 +174,22 @@ export default function DataUploadPage() {
     filter.period ? query("/api/v1/cost-validation/summary", { period: filter.period }) : null
   );
 
+  useEffect(() => {
+    if (user.data) cachedUser = user.data;
+  }, [user.data]);
+
+  useEffect(() => {
+    if (filter.period && status.data) statusCache.set(filter.period, status.data);
+  }, [filter.period, status.data]);
+
+  useEffect(() => {
+    if (filter.period && history.data) historyCache.set(filter.period, history.data);
+  }, [filter.period, history.data]);
+
+  const userData = user.data ?? cachedUser;
+  const statusData = status.data ?? (filter.period ? statusCache.get(filter.period) : undefined);
+  const historyData = history.data ?? (filter.period ? historyCache.get(filter.period) : undefined);
+
   const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [fileName, setFileName] = useState("");
@@ -183,8 +204,10 @@ export default function DataUploadPage() {
   const currentMonthValue = useMemo(() => toMonthInputValue(filter.period), [filter.period]);
   const futureBlocked = useMemo(() => isFuturePeriod(filter.period), [filter.period]);
 
-  const locked = Boolean(status.data?.validation?.is_validated);
-  const isInitialLoading = filter.loading || status.loading || user.loading;
+  const locked = Boolean(statusData?.validation?.is_validated);
+  const isInitialLoading = (!statusData || !userData) && (filter.loading || status.loading || user.loading);
+  const isHistoryLoading = !historyData && (isInitialLoading || history.loading);
+  const isRefreshing = filter.loading || status.loading || user.loading || history.loading;
 
   const disabled =
     busy ||
@@ -193,7 +216,7 @@ export default function DataUploadPage() {
     !filter.period ||
     isInitialLoading ||
     Boolean(status.error) ||
-    !user.data;
+    !userData;
 
   function changePeriod(value: string) {
     if (busy) return;
@@ -307,7 +330,7 @@ export default function DataUploadPage() {
       <Filters
         {...filter}
         periods={filter.periods.filter((p) => !isFuturePeriod(p))}
-        loading={isInitialLoading}
+        loading={isRefreshing}
         onPeriod={changePeriod}
         refresh={() => {
           filter.reload();
@@ -346,12 +369,12 @@ export default function DataUploadPage() {
               </div>
             ) : (
               <>
-                {user.data && (
+                {userData && (
                   <p>
-                    {user.data.name} · {user.data.role}
+                    {userData.name} · {userData.role}
                   </p>
                 )}
-                {status.data && (
+                {statusData && (
                   <div className="mt-2">
                     <Status validated={locked} />
                   </div>
@@ -514,13 +537,13 @@ export default function DataUploadPage() {
 
       <Card title="Riwayat Unggahan Kalender">
         <LoadState
-          loading={isInitialLoading || history.loading}
+          loading={isHistoryLoading}
           error={!isInitialLoading ? history.error : undefined}
           onRetry={history.reload}
           variant="table-inner"
           rows={4}
         />
-        {!isInitialLoading && !history.loading && history.data && <HistoryTable rows={history.data} />}
+        {!isHistoryLoading && historyData && <HistoryTable rows={historyData} />}
       </Card>
 
       {confirm && draft && (

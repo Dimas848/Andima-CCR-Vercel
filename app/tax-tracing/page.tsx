@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Workspace,
   Filters,
@@ -25,6 +25,10 @@ import {
   type TaxSummary,
   type CustomerData,
 } from "@/lib/c2-client";
+
+// Cache ringan agar perpindahan halaman dan filter tampil instan
+const taxOptionsCache = new Map<string, CustomerData>();
+const taxResultCache = new Map<string, TaxData>();
 
 export default function TaxTracingPage() {
   const filter = usePeriod();
@@ -51,10 +55,35 @@ export default function TaxTracingPage() {
       : null
   );
 
-  const data = result.data;
-  const isLoading = filter.loading || result.loading;
+  const cacheKey = filter.period ? `${filter.period}|${company}|${dest}` : "";
+
+  useEffect(() => {
+    if (filter.period && options.data) {
+      taxOptionsCache.set(filter.period, options.data);
+    }
+  }, [filter.period, options.data]);
+
+  useEffect(() => {
+    if (cacheKey && result.data) {
+      taxResultCache.set(cacheKey, result.data);
+    }
+  }, [cacheKey, result.data]);
+
+  const optionsData = options.data ?? (filter.period ? taxOptionsCache.get(filter.period) : undefined);
+  const data =
+    result.data ??
+    (cacheKey ? taxResultCache.get(cacheKey) : undefined) ??
+    (filter.period ? taxResultCache.get(`${filter.period}|ALL|ALL`) : undefined);
+
+  const isLoading = !data && (filter.loading || result.loading);
+  const isRefreshing = filter.loading || result.loading || options.loading;
   const loadError = filter.error || result.error || options.error;
-  const allIssues = countRecordsIssues(data?.records ?? []);
+
+  const allIssues = useMemo(() => countRecordsIssues(data?.records ?? []), [data?.records]);
+  const destinations = useMemo(
+    () => [...new Set(optionsData?.records.map((row) => row.dest) ?? [])].filter(Boolean),
+    [optionsData?.records]
+  );
 
   const columns: Column<TaxSummary>[] = [
     {
@@ -107,25 +136,26 @@ export default function TaxTracingPage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setDetail(null);
         }}
         company={company}
-        companies={options.data?.companies}
+        companies={optionsData?.companies}
         onCompany={(value) => {
           setCompany(value);
           setDest("ALL");
           setDetail(null);
         }}
         dest={dest}
-        destinations={[...new Set(options.data?.records.map((row) => row.dest) ?? [])].filter(Boolean)}
+        destinations={destinations}
         onDest={(value) => {
           setDest(value);
           setDetail(null);
         }}
         refresh={() => {
+          filter.reload();
           result.reload();
           options.reload();
         }}

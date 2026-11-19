@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Workspace,
@@ -33,11 +33,17 @@ import {
   type UserInfo,
 } from "@/lib/c2-client";
 
+// Cache ringan per periode & akun agar perpindahan halaman/periode tampil instan
+let cachedUser: UserInfo | undefined;
+const validationCache = new Map<string, ValidationData>();
+const validationDetailsCache = new Map<string, CustomerData>();
+const auditCache = new Map<string, Audit[]>();
+
 function ValidationSkeleton() {
   return (
     <>
       <Card title="Status Periode">
-        <div className="animate-pulse space-y-3">
+        <div className="animate-[pulse_0.85s_ease-in-out_infinite] space-y-3">
           <div className="h-4 w-2/3 rounded bg-slate-200" />
           <div className="h-4 w-1/2 rounded bg-slate-200" />
           <div className="h-4 w-1/3 rounded bg-slate-200" />
@@ -49,7 +55,7 @@ function ValidationSkeleton() {
         {Array.from({ length: 8 }).map((_, idx) => (
           <div
             key={idx}
-            className="animate-pulse rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+            className="animate-[pulse_0.85s_ease-in-out_infinite] rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
           >
             <div className="h-3.5 w-2/3 rounded bg-slate-200" />
             <div className="mt-3 h-6 w-1/2 rounded bg-slate-200" />
@@ -88,8 +94,37 @@ export default function ValidationPage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const data = result.data;
-  const isLoading = filter.loading || result.loading || user.loading;
+  useEffect(() => {
+    if (user.data) cachedUser = user.data;
+  }, [user.data]);
+
+  useEffect(() => {
+    if (filter.period && result.data) {
+      validationCache.set(filter.period, result.data);
+    }
+  }, [filter.period, result.data]);
+
+  useEffect(() => {
+    if (filter.period && details.data) {
+      validationDetailsCache.set(filter.period, details.data);
+    }
+  }, [filter.period, details.data]);
+
+  useEffect(() => {
+    if (filter.period && audit.data) {
+      auditCache.set(filter.period, audit.data);
+    }
+  }, [filter.period, audit.data]);
+
+  const userData = user.data ?? cachedUser;
+  const data = result.data ?? (filter.period ? validationCache.get(filter.period) : undefined);
+  const detailsData = details.data ?? (filter.period ? validationDetailsCache.get(filter.period) : undefined);
+  const auditData = audit.data ?? (filter.period ? auditCache.get(filter.period) : undefined);
+
+  const isLoading = (!data || !userData) && (filter.loading || result.loading || user.loading);
+  const isRefreshing = filter.loading || result.loading || user.loading || details.loading || audit.loading;
+  const detailsLoading = !detailsData && details.loading;
+  const auditLoading = !auditData && audit.loading;
   const loadError = filter.error || result.error || user.error;
   const locked = Boolean(data?.validation?.is_validated);
 
@@ -98,8 +133,8 @@ export default function ValidationPage() {
   ) => data?.companies.reduce((total, row) => total + amount(row[key]), 0) ?? 0;
 
   const issueCount = useMemo(
-    () => countRecordsIssues(details.data?.records ?? []),
-    [details.data?.records]
+    () => countRecordsIssues(detailsData?.records ?? []),
+    [detailsData?.records]
   );
 
   async function lock() {
@@ -112,6 +147,10 @@ export default function ValidationPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period: filter.period, notes }),
       });
+      if (filter.period) {
+        validationCache.delete(filter.period);
+        auditCache.delete(filter.period);
+      }
       setConfirm(false);
       setNotes("");
       setNotice(`Periode ${filter.period} berhasil divalidasi dan dikunci.`);
@@ -128,7 +167,7 @@ export default function ValidationPage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setNotes("");
@@ -136,6 +175,7 @@ export default function ValidationPage() {
           setError(undefined);
         }}
         refresh={() => {
+          filter.reload();
           result.reload();
           details.reload();
           audit.reload();
@@ -157,7 +197,7 @@ export default function ValidationPage() {
       {notice && <Notice>{notice}</Notice>}
       {error && !confirm && <Notice error>{error}</Notice>}
 
-      {isLoading && <ValidationSkeleton />}
+      {isLoading && !loadError && <ValidationSkeleton />}
 
       {!isLoading && !loadError && !filter.period && (
         <Notice>Belum ada periode yang dapat diperiksa.</Notice>
@@ -188,7 +228,7 @@ export default function ValidationPage() {
               </div>
             ) : (
               <div className="mt-4">
-                {user.data?.canValidate ? (
+                {userData?.canValidate ? (
                   <button
                     type="button"
                     className={buttonClass}
@@ -220,13 +260,13 @@ export default function ValidationPage() {
               { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
                 label: "8. Total Kendala",
-                value: details.loading ? "Memuat…" : `${number(issueCount)} Kendala`,
-                detail: details.loading
+                value: detailsLoading ? "Memuat…" : `${number(issueCount)} Kendala`,
+                detail: detailsLoading
                   ? "Memeriksa transaksi"
                   : issueCount > 0
                   ? "Terdapat catatan ketidaksesuaian"
                   : "Seluruh transaksi sesuai",
-                alert: !details.loading && issueCount > 0,
+                alert: !detailsLoading && issueCount > 0,
               },
             ]}
           />
@@ -237,15 +277,15 @@ export default function ValidationPage() {
 
           <Card title="Jejak Audit Pengesahan">
             <LoadState
-              loading={audit.loading}
+              loading={auditLoading}
               error={audit.error}
               onRetry={audit.reload}
               variant="table-inner"
               rows={3}
             />
-            {!audit.loading && audit.data && (
+            {!auditLoading && auditData && (
               <DataTable
-                rows={audit.data}
+                rows={auditData}
                 rowKey={(row) => row.log_id}
                 columns={[
                   { label: "Waktu", cell: (row) => timestamp(row.action_timestamp) },

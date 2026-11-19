@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Workspace,
   Card,
@@ -37,9 +37,18 @@ const colors = [
   "#65a30d",
 ];
 
+// Cache ringan per periode agar pindah halaman atau ganti periode tampil instan
+const dashboardCache = new Map<string, DashboardData>();
+const detailsCache = new Map<string, CustomerData>();
+
 function DashboardSkeleton() {
   return (
-    <div role="status" aria-busy="true" aria-label="Memuat dasbor" className="space-y-6 animate-pulse">
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Memuat dasbor"
+      className="space-y-6 animate-[pulse_0.85s_ease-in-out_infinite]"
+    >
       {/* 1. Skeleton Badge Status & Periode */}
       <div className="flex items-center gap-3">
         <div className="h-6 w-32 rounded-full bg-slate-200" />
@@ -144,38 +153,49 @@ export default function DashboardPage() {
       : null
   );
 
-  const selected = useApi<DashboardData>(
-    filter.period && company !== "ALL"
-      ? query("/api/v1/cost-analytics/dashboard-summary", {
-          period: filter.period,
-          company,
-        })
-      : null
-  );
-
   const details = useApi<CustomerData>(
     filter.period
       ? query("/api/v1/cost-analytics/customers", {
           period: filter.period,
-          company,
+          company: "ALL",
         })
       : null
   );
 
-  const result = company === "ALL" ? all : selected;
-  const data = result.data;
-  const isLoading = filter.loading || result.loading;
-  const errorMsg = filter.error || result.error;
-  const rows = useMemo(() => data?.companies ?? [], [data?.companies]);
+  useEffect(() => {
+    if (filter.period && all.data) {
+      dashboardCache.set(filter.period, all.data);
+    }
+  }, [filter.period, all.data]);
+
+  useEffect(() => {
+    if (filter.period && details.data) {
+      detailsCache.set(filter.period, details.data);
+    }
+  }, [filter.period, details.data]);
+
+  const data = all.data ?? (filter.period ? dashboardCache.get(filter.period) : undefined);
+  const detailsData = details.data ?? (filter.period ? detailsCache.get(filter.period) : undefined);
+
+  const isLoading = !data && (filter.loading || all.loading);
+  const isRefreshing = filter.loading || all.loading;
+  const errorMsg = filter.error || all.error;
+
+  const allCompanies = useMemo(() => data?.companies ?? [], [data?.companies]);
+  const rows = useMemo(() => {
+    if (company === "ALL") return allCompanies;
+    return allCompanies.filter((row) => row.company_name === company);
+  }, [allCompanies, company]);
 
   const sum = (
     key: "sum_sub_total" | "sum_vat" | "sum_pph23" | "sum_others" | "sum_dip_iata" | "sum_total_cost"
   ) => rows.reduce((total, row) => total + amount(row[key]), 0);
 
-  const issueCount = useMemo(
-    () => countRecordsIssues(details.data?.records ?? []),
-    [details.data?.records]
-  );
+  const issueCount = useMemo(() => {
+    const records = detailsData?.records ?? [];
+    const scoped = company === "ALL" ? records : records.filter((r) => r.company_name === company);
+    return countRecordsIssues(scoped);
+  }, [detailsData?.records, company]);
 
   const chartTotal = useMemo(
     () => rows.reduce((acc, row) => acc + amount(row.sum_total_cost), 0),
@@ -203,6 +223,7 @@ export default function DashboardPage() {
   }, [rows]);
 
   const focused = rows.find((row) => row.customer_code === hovered);
+  const detailsLoading = !detailsData && details.loading;
 
   return (
     <Workspace
@@ -216,20 +237,19 @@ export default function DashboardPage() {
     >
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={filter.setPeriod}
         company={company}
-        companies={all.data?.companies}
+        companies={allCompanies}
         onCompany={setCompany}
         refresh={() => {
           filter.reload();
           all.reload();
-          selected.reload();
           details.reload();
         }}
       />
 
-      {errorMsg && <LoadState loading={false} error={errorMsg} onRetry={result.reload} />}
+      {errorMsg && <LoadState loading={false} error={errorMsg} onRetry={all.reload} />}
       {isLoading && !errorMsg && <DashboardSkeleton />}
 
       {!isLoading && !filter.period && !errorMsg && (
@@ -254,13 +274,13 @@ export default function DashboardPage() {
               { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
                 label: "8. Total Kendala",
-                value: details.loading ? "Memuat…" : `${number(issueCount)} Kendala`,
-                detail: details.loading
+                value: detailsLoading ? "Memuat…" : `${number(issueCount)} Kendala`,
+                detail: detailsLoading
                   ? "Memeriksa transaksi"
                   : issueCount > 0
                   ? "Perlu pemeriksaan pada rincian"
                   : "Seluruh transaksi sesuai",
-                alert: !details.loading && issueCount > 0,
+                alert: !detailsLoading && issueCount > 0,
               },
             ]}
           />

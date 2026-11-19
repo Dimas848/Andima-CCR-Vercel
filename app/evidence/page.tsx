@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
 import {
   Workspace,
   Filters,
@@ -29,6 +30,11 @@ interface Preview {
   records: SalesRecord[];
 }
 
+// Cache ringan per periode, akun, dan pratinjau agar tampilan instan
+let cachedUser: UserInfo | undefined;
+const evidenceHistoryCache = new Map<string, Evidence[]>();
+const evidencePreviewCache = new Map<string, Preview>();
+
 export default function EvidencePage() {
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
@@ -45,7 +51,29 @@ export default function EvidencePage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  const isLoading = filter.loading || history.loading || user.loading;
+  useEffect(() => {
+    if (user.data) cachedUser = user.data;
+  }, [user.data]);
+
+  useEffect(() => {
+    if (filter.period && history.data) {
+      evidenceHistoryCache.set(filter.period, history.data);
+    }
+  }, [filter.period, history.data]);
+
+  useEffect(() => {
+    if (selected && preview.data) {
+      evidencePreviewCache.set(selected.upload_id, preview.data);
+    }
+  }, [selected, preview.data]);
+
+  const userData = user.data ?? cachedUser;
+  const historyData = history.data ?? (filter.period ? evidenceHistoryCache.get(filter.period) : undefined);
+  const previewData = preview.data ?? (selected ? evidencePreviewCache.get(selected.upload_id) : undefined);
+
+  const isLoading = (!historyData || !userData) && (filter.loading || history.loading || user.loading);
+  const isRefreshing = filter.loading || history.loading || user.loading;
+  const isPreviewLoading = !previewData && preview.loading;
   const loadError = filter.error || history.error || user.error;
 
   async function remove() {
@@ -57,6 +85,8 @@ export default function EvidencePage() {
         `/api/v1/cost-evidence/history/${encodeURIComponent(deletion.upload_id)}`,
         { method: "DELETE" }
       );
+      evidencePreviewCache.delete(deletion.upload_id);
+      if (filter.period) evidenceHistoryCache.delete(filter.period);
       setNotice(
         `Bukti dokumen ${deletion.file_name} telah dihapus. Jejak audit penghapusan disimpan.${
           deleted.warning ? ` ${deleted.warning}` : ""
@@ -77,7 +107,7 @@ export default function EvidencePage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setSelected(null);
@@ -94,7 +124,7 @@ export default function EvidencePage() {
 
       {!isLoading && !loadError && (
         <Notice>
-          {user.data?.canDelete
+          {userData?.canDelete
             ? "Hak hapus tersedia untuk Manajer yang berwenang pada periode yang masih terbuka. Periode yang sudah tervalidasi otomatis terkunci."
             : "Akses baca dan pratinjau. Penghapusan bukti dokumen hanya tersedia bagi Manajer yang berwenang."}
         </Notice>
@@ -103,7 +133,7 @@ export default function EvidencePage() {
       <Card title="Riwayat Unggahan & Log Stempel Waktu Bukti">
         <LoadState
           loading={isLoading}
-          error={loadError}
+          error={!isLoading ? loadError : undefined}
           onRetry={() => {
             history.reload();
             user.reload();
@@ -113,10 +143,10 @@ export default function EvidencePage() {
         />
         {!isLoading && !loadError && (
           <HistoryTable
-            rows={history.data ?? []}
+            rows={historyData ?? []}
             onPreview={setSelected}
             onDelete={
-              user.data?.canDelete
+              userData?.canDelete
                 ? (row) => {
                     setDeletion(row);
                     setError(undefined);
@@ -134,19 +164,19 @@ export default function EvidencePage() {
             {selected.uploaded_by_name || "Belum tercatat"}
           </p>
           <LoadState
-            loading={preview.loading}
+            loading={isPreviewLoading}
             error={preview.error}
             onRetry={preview.reload}
             variant="table-inner"
             rows={4}
           />
-          {!preview.loading && preview.data && (
+          {!isPreviewLoading && previewData && (
             <>
               <p className="text-sm">
-                {preview.data.records.length} rincian tersimpan · Total log:{" "}
-                {money(preview.data.evidence.total_cost_amount)}
+                {previewData.records.length} rincian tersimpan · Total log:{" "}
+                {money(previewData.evidence.total_cost_amount)}
               </p>
-              <SalesTable records={preview.data.records} />
+              <SalesTable records={previewData.records} />
               <p className="text-xs text-slate-500">
                 Pratinjau menampilkan isi laporan yang tersimpan dan terhubung ke bukti dokumen ini.
               </p>

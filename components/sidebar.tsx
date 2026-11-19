@@ -239,18 +239,6 @@ export default function Sidebar({
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         } ${isCollapsed ? "lg:-translate-x-full" : "lg:translate-x-0"}`}
       >
-        {!isCollapsed && (
-          <button
-            type="button"
-            onClick={toggleCollapse}
-            className="absolute -right-3.5 top-20 hidden h-7 w-7 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-md hover:bg-[#124fd9] lg:flex"
-            aria-label="Sembunyikan sidebar"
-            title="Sembunyikan sidebar"
-          >
-            <ChevronLeft size={15} />
-          </button>
-        )}
-
         <div className="flex items-center justify-between px-2">
           <div className="flex items-center gap-3">
             <img
@@ -277,14 +265,29 @@ export default function Sidebar({
 
         <nav className="mt-8 space-y-1.5 text-sm font-semibold">
           <div>
-            <button
-              type="button"
-              onClick={() => setIsCcrOpen((value) => !value)}
-              className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
-            >
-              <span className="flex items-center gap-3">CCR</span>
-              <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsCcrOpen((value) => !value)}
+                className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
+              >
+                <span className="flex items-center gap-3">CCR</span>
+                <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />
+              </button>
+
+              {!isCollapsed && (
+                <button
+                  type="button"
+                  onClick={toggleCollapse}
+                  className="absolute left-[calc(100%+6px)] top-1/2 hidden h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:flex"
+                  aria-label="Sembunyikan sidebar"
+                  title="Sembunyikan sidebar"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+              )}
+            </div>
+
             {isCcrOpen && (
               <div className="ml-5 mt-2 border-l border-[#d9e2fc]/20 pl-3">
                 <SidebarGroup label="C1" open={isC1Open} active={isC1Route} onToggle={() => setIsC1Open((v) => !v)}>

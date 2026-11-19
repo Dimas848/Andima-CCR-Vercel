@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Workspace,
   Filters,
@@ -24,6 +24,9 @@ import {
   type CustomerData,
 } from "@/lib/c2-client";
 
+// Cache ringan per periode agar perpindahan halaman/periode tampil instan
+const customerCostCache = new Map<string, CustomerData>();
+
 function CustomerCostSkeleton() {
   return (
     <>
@@ -46,51 +49,63 @@ export default function CustomerCostPage() {
   const all = useApi<CustomerData>(
     filter.period ? query("/api/v1/cost-analytics/customers", { period: filter.period, company: "ALL" }) : null
   );
-  const selected = useApi<CustomerData>(
-    filter.period && company !== "ALL"
-      ? query("/api/v1/cost-analytics/customers", { period: filter.period, company })
-      : null
-  );
 
-  const result = company === "ALL" ? all : selected;
-  const rows = result.data?.companies ?? [];
-  const records = result.data?.records ?? [];
-  const isLoading = filter.loading || result.loading;
-  const loadError = filter.error || result.error;
+  useEffect(() => {
+    if (filter.period && all.data) {
+      customerCostCache.set(filter.period, all.data);
+    }
+  }, [filter.period, all.data]);
+
+  const data = all.data ?? (filter.period ? customerCostCache.get(filter.period) : undefined);
+  const isLoading = !data && (filter.loading || all.loading);
+  const isRefreshing = filter.loading || all.loading;
+  const loadError = filter.error || all.error;
+
+  const allCompanies = useMemo(() => data?.companies ?? [], [data?.companies]);
+  const rows = useMemo(() => {
+    if (company === "ALL") return allCompanies;
+    return allCompanies.filter((row) => row.company_name === company);
+  }, [allCompanies, company]);
+
+  const records = useMemo(() => {
+    const allRecords = data?.records ?? [];
+    if (company === "ALL") return allRecords;
+    return allRecords.filter((row) => row.company_name === company);
+  }, [data?.records, company]);
 
   const sum = (
     key: "sum_sub_total" | "sum_vat" | "sum_pph23" | "sum_others" | "sum_dip_iata" | "sum_total_cost"
   ) => rows.reduce((total, row) => total + amount(row[key]), 0);
 
-  const issueCount = countRecordsIssues(records);
+  const issueCount = useMemo(() => countRecordsIssues(records), [records]);
 
   return (
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isLoading}
+        loading={isRefreshing}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setDetail(null);
         }}
         company={company}
-        companies={all.data?.companies}
+        companies={allCompanies}
         onCompany={(value) => {
           setCompany(value);
           setDetail(null);
         }}
         refresh={() => {
+          filter.reload();
           all.reload();
-          selected.reload();
         }}
       />
 
-      {!isLoading && loadError && <LoadState loading={false} error={loadError} onRetry={result.reload} />}
-      {isLoading && <CustomerCostSkeleton />}
+      {!isLoading && loadError && <LoadState loading={false} error={loadError} onRetry={all.reload} />}
+      {isLoading && !loadError && <CustomerCostSkeleton />}
 
       {!isLoading && !filter.period && !loadError && <Notice>Belum ada data biaya bulanan.</Notice>}
 
-      {!isLoading && !loadError && result.data && (
+      {!isLoading && !loadError && data && (
         <>
           <Kpis
             items={[
@@ -120,7 +135,7 @@ export default function CustomerCostPage() {
         </>
       )}
 
-      {detail && result.data && (
+      {detail && data && (
         <Modal title={`${detail} · ${filter.period}`} onClose={() => setDetail(null)}>
           <SalesTable records={records.filter((row) => row.company_name === detail)} />
         </Modal>
