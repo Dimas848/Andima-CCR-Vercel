@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw, Search, X } from "lucide-react";
 import Sidebar from "@/components/sidebar";
 import { amount, money, number, timestamp, type Evidence, type MonthlySummary, type SalesRecord } from "@/lib/c2-client";
 
@@ -163,14 +163,24 @@ export function Skeleton({
 }) {
   if (variant === "table-inner") {
     return (
-      <div role="status" aria-busy="true" aria-label="Memuat data" className="animate-pulse">
+      <div
+        role="status"
+        aria-busy="true"
+        aria-label="Memuat data"
+        className="animate-[pulse_0.85s_ease-in-out_infinite]"
+      >
         <TableInnerSkeleton rows={rows} />
       </div>
     );
   }
 
   return (
-    <div role="status" aria-busy="true" aria-label="Memuat data" className="space-y-6 animate-pulse">
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Memuat data"
+      className="space-y-6 animate-[pulse_0.85s_ease-in-out_infinite]"
+    >
       {variant === "evidence" && (
         <>
           <div className="h-11 rounded-lg border border-sky-200 bg-sky-50/70" />
@@ -282,6 +292,151 @@ export function LoadState({
   return loading ? <Skeleton variant={variant} rows={rows} /> : null;
 }
 
+function SearchCombobox({
+  label,
+  value,
+  allLabel,
+  emptyLabel,
+  options,
+  onChange,
+  className = "min-w-44 flex-1",
+}: {
+  label: string;
+  value: string;
+  allLabel: string;
+  emptyLabel: string;
+  options: { value: string; label: string; badge?: string }[];
+  onChange: (value: string) => void;
+  className?: string;
+}) {
+  const inputId = useId();
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [searchText, setSearchText] = useState("");
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const keyword = searchText.trim().toLowerCase();
+  const filtered = keyword
+    ? options.filter(
+        (item) =>
+          item.label.toLowerCase().includes(keyword) ||
+          (item.badge && item.badge.toLowerCase().includes(keyword))
+      )
+    : options;
+
+  const isFiltered = Boolean(value && value !== "ALL");
+
+  return (
+    <div ref={boxRef} className={`relative ${className}`}>
+      <label htmlFor={inputId} className="block text-xs font-semibold text-slate-600">
+        {label}
+      </label>
+      <div className="relative mt-1.5 flex items-center">
+        <Search size={15} className="pointer-events-none absolute left-3 text-slate-400" />
+        <input
+          id={inputId}
+          type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-autocomplete="list"
+          placeholder="Search"
+          value={open ? searchText : isFiltered ? value : ""}
+          onFocus={() => {
+            setSearchText(isFiltered ? value : "");
+            setOpen(true);
+          }}
+          onChange={(event) => {
+            setSearchText(event.target.value);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setOpen(false);
+            } else if (event.key === "Enter" && open && filtered.length > 0) {
+              event.preventDefault();
+              onChange(filtered[0].value);
+              setOpen(false);
+            }
+          }}
+          className={`${fieldClass} h-[42px] pl-9 ${isFiltered || (open && searchText) ? "pr-9" : ""}`}
+        />
+        {(isFiltered || (open && searchText)) && (
+          <button
+            type="button"
+            aria-label={`Reset filter ${label.toLowerCase()}`}
+            onClick={() => {
+              onChange("ALL");
+              setSearchText("");
+              setOpen(false);
+            }}
+            className="absolute right-2.5 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              onChange("ALL");
+              setSearchText("");
+              setOpen(false);
+            }}
+            className={`flex w-full items-center justify-between px-3.5 py-2 text-left text-sm transition-colors hover:bg-sky-50 ${
+              !isFiltered ? "bg-sky-50 font-semibold text-sky-700" : "text-slate-700"
+            }`}
+          >
+            <span>{allLabel}</span>
+            <span className="text-xs text-slate-400">{options.length}</span>
+          </button>
+
+          {filtered.map((item) => {
+            const selected = value === item.value;
+            return (
+              <button
+                type="button"
+                key={item.value}
+                onClick={() => {
+                  onChange(item.value);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center justify-between gap-3 px-3.5 py-2 text-left text-sm transition-colors hover:bg-sky-50 ${
+                  selected ? "bg-sky-50 font-semibold text-sky-700" : "text-slate-700"
+                }`}
+              >
+                <span className="truncate">{item.label}</span>
+                {item.badge && (
+                  <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
+          {filtered.length === 0 && (
+            <p className="px-3.5 py-3 text-center text-xs text-slate-500">
+              {emptyLabel} &ldquo;{searchText}&rdquo; tidak ditemukan.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Filters({
   period,
   periods,
@@ -308,13 +463,26 @@ export function Filters({
   loading?: boolean;
 }) {
   const options = [...new Set([period, ...periods].filter(Boolean))];
-  const companyOptions = [...new Map((companies ?? []).map((row) => [row.company_name, row])).values()];
+  const companyOptions = [...new Map((companies ?? []).map((row) => [row.company_name, row])).values()].map(
+    (row) => ({
+      value: row.company_name,
+      label: row.company_name,
+      badge: row.customer_code,
+    })
+  );
+  const destOptions = [...new Set([...(dest && dest !== "ALL" ? [dest] : []), ...(destinations ?? [])])].map(
+    (value) => ({
+      value,
+      label: value,
+    })
+  );
+
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <label className="min-w-44 flex-1 text-xs font-semibold text-slate-600">
         Periode
         <select
-          className={`${fieldClass} mt-1.5`}
+          className={`${fieldClass} mt-1.5 h-[42px]`}
           value={period}
           disabled={loading && !options.length}
           onChange={(event) => onPeriod(event.target.value)}
@@ -327,35 +495,33 @@ export function Filters({
           ))}
         </select>
       </label>
+
       {onCompany && (
-        <label className="min-w-60 flex-[2] text-xs font-semibold text-slate-600">
-          Perusahaan
-          <select className={`${fieldClass} mt-1.5`} value={company} onChange={(event) => onCompany(event.target.value)}>
-            <option value="ALL">Semua perusahaan</option>
-            {company !== "ALL" && company && !companyOptions.some((row) => row.company_name === company) && (
-              <option value={company}>{company}</option>
-            )}
-            {companyOptions.map((row) => (
-              <option key={row.customer_code} value={row.company_name}>
-                {row.customer_code} · {row.company_name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SearchCombobox
+          label="Perusahaan"
+          value={company ?? "ALL"}
+          allLabel="Semua perusahaan"
+          emptyLabel="Perusahaan"
+          options={companyOptions}
+          onChange={onCompany}
+          className="min-w-44 flex-1"
+        />
       )}
+
       {onDest && (
-        <label className="min-w-44 flex-1 text-xs font-semibold text-slate-600">
-          Kota / destinasi
-          <select className={`${fieldClass} mt-1.5`} value={dest} onChange={(event) => onDest(event.target.value)}>
-            <option value="ALL">Semua destinasi</option>
-            {[...new Set([...(dest && dest !== "ALL" ? [dest] : []), ...(destinations ?? [])])].map((value) => (
-              <option key={value}>{value}</option>
-            ))}
-          </select>
-        </label>
+        <SearchCombobox
+          label="Kota / destinasi"
+          value={dest ?? "ALL"}
+          allLabel="Semua destinasi"
+          emptyLabel="Destinasi"
+          options={destOptions}
+          onChange={onDest}
+          className="min-w-44 flex-1"
+        />
       )}
+
       {refresh && (
-        <button type="button" onClick={refresh} className={secondaryClass}>
+        <button type="button" onClick={refresh} className={`${secondaryClass} h-[42px]`}>
           <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Muat ulang
         </button>
       )}

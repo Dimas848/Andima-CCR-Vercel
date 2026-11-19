@@ -86,6 +86,71 @@ function isFuturePeriod(periodStr: string): boolean {
   return ym > maxYm;
 }
 
+function UploadErrorNotice({ message }: { message: string }) {
+  const headerMatch = message.match(/^(.*?kolom)\s*:\s*([\s\S]+)$/i);
+
+  if (headerMatch) {
+    const heading = headerMatch[1].trim();
+    const rest = headerMatch[2].trim();
+    const sentenceSplit = rest.split(/(?<!No)\.\s+(?=[A-Z])/);
+    const rawColumns = sentenceSplit[0] ?? "";
+    const extraNotes = sentenceSplit
+      .slice(1)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    const columns = rawColumns
+      .replace(/\.$/, "")
+      .split(",")
+      .map((col) => col.trim())
+      .filter(Boolean);
+
+    return (
+      <Notice error>
+        <div className="space-y-2.5">
+          <p className="font-semibold">{heading}:</p>
+          {columns.length > 0 && (
+            <ol className="columns-1 gap-x-8 space-y-1 sm:columns-2 lg:columns-3">
+              {columns.map((col, idx) => (
+                <li key={`${col}-${idx}`} className="flex items-baseline gap-2 break-inside-avoid">
+                  <span className="w-6 shrink-0 text-right font-medium tabular-nums">{idx + 1}.</span>
+                  <span>{col}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {extraNotes.length > 0 && (
+            <ul className="list-disc space-y-1 border-t border-red-200/80 pl-5 pt-2">
+              {extraNotes.map((note, idx) => (
+                <li key={idx}>{note}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Notice>
+    );
+  }
+
+  const points = message
+    .split(/\n+|;\s+|(?<!No)\.\s+(?=[A-Z])/)
+    .map((item) => item.trim().replace(/\.$/, ""))
+    .filter(Boolean);
+
+  if (points.length > 1) {
+    return (
+      <Notice error>
+        <ul className="list-disc space-y-1 pl-5">
+          {points.map((point, idx) => (
+            <li key={idx}>{point}.</li>
+          ))}
+        </ul>
+      </Notice>
+    );
+  }
+
+  return <Notice error>{message}</Notice>;
+}
+
 interface Draft {
   draftId: string;
   upload_id: string;
@@ -254,7 +319,7 @@ export default function DataUploadPage() {
       <Card title="Kalender">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
           {isInitialLoading ? (
-            <div className="animate-pulse space-y-2">
+            <div className="animate-[pulse_0.85s_ease-in-out_infinite] space-y-2">
               <div className="h-3.5 w-56 rounded bg-slate-200" />
               <div className="h-10 w-52 rounded-lg bg-slate-200" />
             </div>
@@ -275,7 +340,7 @@ export default function DataUploadPage() {
           )}
           <div className="text-sm text-slate-500">
             {isInitialLoading ? (
-              <div className="animate-pulse space-y-2">
+              <div className="animate-[pulse_0.85s_ease-in-out_infinite] space-y-2">
                 <div className="h-4 w-48 rounded bg-slate-200" />
                 <div className="ml-auto h-6 w-28 rounded-full bg-slate-200" />
               </div>
@@ -321,7 +386,7 @@ export default function DataUploadPage() {
         )}
 
         {isInitialLoading ? (
-          <div className="mt-4 animate-pulse rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+          <div className="mt-4 animate-[pulse_0.85s_ease-in-out_infinite] rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 p-8 text-center">
             <div className="mx-auto mb-3 h-9 w-9 rounded-full bg-slate-200" />
             <div className="mx-auto h-4 w-64 rounded bg-slate-200" />
             <div className="mx-auto mt-2 h-3.5 w-80 rounded bg-slate-100" />
@@ -383,7 +448,7 @@ export default function DataUploadPage() {
         </p>
       </Card>
 
-      {error && <Notice error>{error}</Notice>}
+      {error && <UploadErrorNotice message={error} />}
       {notice && <Notice>{notice}</Notice>}
 
       {draft && (

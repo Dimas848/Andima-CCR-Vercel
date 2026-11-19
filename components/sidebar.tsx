@@ -243,7 +243,7 @@ export default function Sidebar({
           <button
             type="button"
             onClick={toggleCollapse}
-            className="absolute -right-3.5 top-20 hidden h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-[#155cfd] text-white shadow-md hover:bg-[#124fd9] lg:flex"
+            className="absolute -right-3.5 top-20 hidden h-7 w-7 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-md hover:bg-[#124fd9] lg:flex"
             aria-label="Sembunyikan sidebar"
             title="Sembunyikan sidebar"
           >
