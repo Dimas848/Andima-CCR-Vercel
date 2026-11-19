@@ -231,8 +231,8 @@ export default function DataUploadPage() {
 
   return (
     <Workspace
-      title="Data Upload"
-      description="Unggah Laporan Penjualan Perusahaan, periksa 14 kolom beserta 8 indikator biaya & pajak, lalu konfirmasi penyimpanan."
+      title=""
+      description=""
       action={
         <Link href="/evidence" className={secondaryClass}>
           Lihat Bukti Dokumen

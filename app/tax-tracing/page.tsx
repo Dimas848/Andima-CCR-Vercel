@@ -104,10 +104,7 @@ export default function TaxTracingPage() {
   ];
 
   return (
-    <Workspace
-      title="Tax Component Tracing"
-      description="Telusuri Dasar Pengenaan Pajak (DPP), PPN 11%, PPh 23, Lain-lain, DIP IATA, dan potensi kendala per perusahaan."
-    >
+    <Workspace title="" description="">
       <Filters
         {...filter}
         loading={isLoading}

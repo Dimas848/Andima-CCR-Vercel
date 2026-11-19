@@ -65,10 +65,7 @@ export default function CustomerCostPage() {
   const issueCount = countRecordsIssues(records);
 
   return (
-    <Workspace
-      title="Customer Cost"
-      description="Rincian biaya dan pajak pelanggan dalam mode baca saja. Seluruh 8 indikator kinerja utama selaras dengan Dasbor dan Validasi."
-    >
+    <Workspace title="" description="">
       <Filters
         {...filter}
         loading={isLoading}

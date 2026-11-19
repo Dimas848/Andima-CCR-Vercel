@@ -46,16 +46,30 @@ export function Workspace({
   children: ReactNode;
   action?: ReactNode;
 }) {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const custom = event as CustomEvent<boolean>;
+      setSidebarCollapsed(Boolean(custom.detail));
+    };
+    window.addEventListener("andima-sidebar-collapse", handler);
+    return () => window.removeEventListener("andima-sidebar-collapse", handler);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#f3f6fa] text-slate-800">
       <Sidebar />
-      <main className="px-4 pb-10 pt-20 sm:px-8 lg:ml-[260px] lg:pt-9">
+      <main
+        className={`px-4 pb-10 pt-20 transition-[margin] duration-200 sm:px-8 ${
+          sidebarCollapsed ? "lg:ml-0" : "lg:ml-[260px]"
+        }`}
+      >
         <div className="mx-auto max-w-[1560px]">
-          <header className="mb-7 flex flex-wrap items-start justify-between gap-4">
+          <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-sky-700">CCR / Biaya Bulanan · C2</p>
-              <h1 className="text-3xl font-bold tracking-tight text-[#102846]">{title}</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-slate-500">{description}</p>
+              <h1 className="text-2xl font-bold tracking-tight text-[#102846]">{title}</h1>
+              <p className="mt-1 max-w-3xl text-sm leading-relaxed text-slate-500">{description}</p>
             </div>
             {action}
           </header>

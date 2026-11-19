@@ -59,11 +59,11 @@ function ValidationSkeleton() {
       </div>
 
       <Card title="Pemeriksaan Stempel Waktu Bukti Dokumen">
-        <LoadState loading variant="table" rows={4} />
+        <LoadState loading variant="table-inner" rows={4} />
       </Card>
 
       <Card title="Jejak Audit Pengesahan">
-        <LoadState loading variant="table" rows={3} />
+        <LoadState loading variant="table-inner" rows={3} />
       </Card>
     </>
   );
@@ -125,10 +125,7 @@ export default function ValidationPage() {
   }
 
   return (
-    <Workspace
-      title="Validation"
-      description="Periksa keselarasan ke-8 indikator biaya, pajak, dan bukti dokumen sebelum mengesahkan serta mengunci periode secara permanen."
-    >
+    <Workspace title="" description="">
       <Filters
         {...filter}
         loading={isLoading}
@@ -243,7 +240,7 @@ export default function ValidationPage() {
               loading={audit.loading}
               error={audit.error}
               onRetry={audit.reload}
-              variant="table"
+              variant="table-inner"
               rows={3}
             />
             {!audit.loading && audit.data && (

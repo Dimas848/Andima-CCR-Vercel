@@ -1,15 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
-import {
-  ChevronDown,
-  Menu,
-  X,
-} from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Menu, X } from "lucide-react";
 
 type SidebarProps = {
   userName?: string;
@@ -19,32 +14,35 @@ type SidebarProps = {
   isSigningOut?: boolean;
 };
 
-type Account = {
-  name: string;
-  role: string;
-  initials: string;
-};
+type Account = { name: string; role: string; initials: string };
 
-const fallbackAccount: Account = {
-  name: "Profil belum dimuat",
-  role: "",
-  initials: "—",
+const fallbackAccount: Account = { name: "Profil belum dimuat", role: "", initials: "—" };
+
+const ROUTE_TITLES: Record<string, string> = {
+  "/dashboard": "Dashboard",
+  "/data-upload": "Data Upload",
+  "/customer-cost": "Customer Cost",
+  "/tax-tracing": "Tax Component Tracing",
+  "/evidence": "Evidence",
+  "/monthly-closing": "Validation",
+  "/export-report": "Report",
+  "/sales-overview": "Sales Overview",
+  "/customer-analytics": "Customer Analytics",
+  "/overdue-alert": "Overdue Alert",
 };
 
 function HrmsLink({ label, href }: { label: string; href: string }) {
   const pathname = usePathname();
   const isActive = pathname === href || pathname.startsWith(`${href}/`);
-
   return (
     <Link
       href={href}
-      className={`flex w-full items-center rounded-md px-3 py-2 text-xs transition-colors ${
-        isActive
-          ? "bg-[#B0C6D4] font-bold text-[#0f2324]"
-          : "text-[#d9e2fc]/80 hover:bg-[#1e3765] hover:text-white"
+      className={`flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-xs transition-colors ${
+        isActive ? "bg-[#B0C6D4] font-bold text-[#0f2324]" : "text-[#d9e2fc]/80 hover:bg-[#1e3765] hover:text-white"
       }`}
     >
-      {label}
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive ? "bg-emerald-500" : "bg-[#d9e2fc]/50"}`} />
+      <span>{label}</span>
     </Link>
   );
 }
@@ -58,19 +56,14 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const isPublicRoute =
-    pathname === "/login" ||
-    pathname === "/register" ||
-    pathname.startsWith("/auth/");
+  const isPublicRoute = pathname === "/login" || pathname === "/register" || pathname.startsWith("/auth/");
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const isC1Route = [
-    "/sales-overview",
-    "/customer-analytics",
-    "/overdue-alert",
-  ].some((route) => pathname === route || pathname.startsWith(`${route}/`));
-
+  const isC1Route = ["/sales-overview", "/customer-analytics", "/overdue-alert"].some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
   const isC2Route = [
     "/dashboard",
     "/data-upload",
@@ -90,14 +83,23 @@ export default function Sidebar({
   const [loadedAccount, setLoadedAccount] = useState<Account | null>(null);
 
   const hasSuppliedAccount = Boolean(userName && userRole && userInitials);
-  const suppliedAccount = hasSuppliedAccount
-    ? { name: userName!, role: userRole!, initials: userInitials! }
-    : null;
+  const suppliedAccount = hasSuppliedAccount ? { name: userName!, role: userRole!, initials: userInitials! } : null;
   const account = suppliedAccount ?? loadedAccount ?? fallbackAccount;
+
+  const currentPageTitle =
+    Object.entries(ROUTE_TITLES).find(([route]) => pathname === route || pathname.startsWith(`${route}/`))?.[1] ??
+    "Modul CCR";
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("andima-sidebar-collapse", { detail: isCollapsed }));
+  }, [isCollapsed]);
+
+  function toggleCollapse() {
+    setIsCollapsed((prev) => !prev);
+  }
 
   useEffect(() => {
     if (isPublicRoute || hasSuppliedAccount) return;
-
     let isMounted = true;
     async function loadAccount() {
       try {
@@ -109,7 +111,13 @@ export default function Sidebar({
             return;
           }
           const name = String(result.data.name);
-          if (isMounted) setLoadedAccount({ name, role: String(result.data.role), initials: name.split(" ").filter(Boolean).map(part => part[0]).join("").slice(0, 2).toUpperCase() });
+          if (isMounted) {
+            setLoadedAccount({
+              name,
+              role: String(result.data.role),
+              initials: name.split(" ").filter(Boolean).map((p) => p[0]).join("").slice(0, 2).toUpperCase(),
+            });
+          }
           return;
         }
         const supabase = createClient();
@@ -145,20 +153,13 @@ export default function Sidebar({
             : "CCR User";
 
         const initials =
-          name
-            .split(" ")
-            .filter(Boolean)
-            .map((part) => part[0])
-            .join("")
-            .slice(0, 2)
-            .toUpperCase() || "AU";
+          name.split(" ").filter(Boolean).map((p) => p[0]).join("").slice(0, 2).toUpperCase() || "AU";
 
         if (isMounted) setLoadedAccount({ name, role, initials });
       } catch {
         // Navigasi tetap berjalan meskipun profil pengguna gagal dimuat.
       }
     }
-
     void loadAccount();
     return () => {
       isMounted = false;
@@ -184,12 +185,72 @@ export default function Sidebar({
 
   return (
     <>
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[260px] flex-col bg-[#0f2342] px-4 py-5 text-[#d9e2fc] shadow-lg transition-transform lg:translate-x-0 ${
-          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+      <header
+        className={`fixed right-0 top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4 transition-[left] duration-200 sm:px-8 ${
+          isCollapsed ? "left-0 lg:left-0" : "left-0 lg:left-[260px]"
         }`}
       >
-        {/* Header Logo & Brand Text */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(true)}
+            className="rounded-lg bg-[#0f2342] p-2 text-white lg:hidden"
+            aria-label="Buka navigasi"
+          >
+            <Menu size={18} />
+          </button>
+
+          {isCollapsed && (
+            <button
+              type="button"
+              onClick={toggleCollapse}
+              className="hidden h-8 w-8 items-center justify-center rounded-full bg-[#155cfd] text-white shadow-sm hover:bg-[#124fd9] lg:inline-flex"
+              aria-label="Tampilkan sidebar"
+              title="Tampilkan sidebar"
+            >
+              <ChevronRight size={16} />
+            </button>
+          )}
+
+          <div className="flex items-center gap-2.5 text-sm">
+            <span className="font-bold tracking-tight text-slate-900">ANDIMA CCR</span>
+            <span className="text-slate-300">|</span>
+            <span className="font-medium text-slate-600">{currentPageTitle}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
+            {account.initials}
+          </div>
+          <div className="hidden text-left sm:block">
+            <p className="text-xs font-semibold leading-tight text-slate-900">{account.name}</p>
+            {account.role && <p className="mt-0.5 text-[11px] leading-tight text-slate-500">{account.role}</p>}
+          </div>
+        </div>
+      </header>
+
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={() => setIsSidebarOpen(false)} />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-[260px] flex-col bg-[#0f2342] px-4 py-5 text-[#d9e2fc] shadow-lg transition-transform duration-200 ${
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } ${isCollapsed ? "lg:-translate-x-full" : "lg:translate-x-0"}`}
+      >
+        {!isCollapsed && (
+          <button
+            type="button"
+            onClick={toggleCollapse}
+            className="absolute -right-3.5 top-20 hidden h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-[#155cfd] text-white shadow-md hover:bg-[#124fd9] lg:flex"
+            aria-label="Sembunyikan sidebar"
+            title="Sembunyikan sidebar"
+          >
+            <ChevronLeft size={15} />
+          </button>
+        )}
+
         <div className="flex items-center justify-between px-2">
           <div className="flex items-center gap-3">
             <img
@@ -222,30 +283,17 @@ export default function Sidebar({
               className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
             >
               <span className="flex items-center gap-3">CCR</span>
-              <ChevronDown
-                size={16}
-                className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`}
-              />
+              <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />
             </button>
             {isCcrOpen && (
               <div className="ml-5 mt-2 border-l border-[#d9e2fc]/20 pl-3">
-                <SidebarGroup
-                  label="C1"
-                  open={isC1Open}
-                  active={isC1Route}
-                  onToggle={() => setIsC1Open((value) => !value)}
-                >
+                <SidebarGroup label="C1" open={isC1Open} active={isC1Route} onToggle={() => setIsC1Open((v) => !v)}>
                   <HrmsLink label="Sales Overview" href="/sales-overview" />
                   <HrmsLink label="Customer Analytics" href="/customer-analytics" />
                   <HrmsLink label="Overdue Alert" href="/overdue-alert" />
                 </SidebarGroup>
 
-                <SidebarGroup
-                  label="C2"
-                  open={isC2Open}
-                  active={isC2Route}
-                  onToggle={() => setIsC2Open((value) => !value)}
-                >
+                <SidebarGroup label="C2" open={isC2Open} active={isC2Route} onToggle={() => setIsC2Open((v) => !v)}>
                   <HrmsLink label="Dashboard" href="/dashboard" />
                   <HrmsLink label="Data Upload" href="/data-upload" />
                   <HrmsLink label="Customer Cost" href="/customer-cost" />
@@ -274,15 +322,6 @@ export default function Sidebar({
           </div>
         </div>
       </aside>
-
-      <button
-        type="button"
-        onClick={() => setIsSidebarOpen(true)}
-        className="fixed left-4 top-4 z-30 rounded-lg bg-[#0f2342] p-2 text-white lg:hidden"
-        aria-label="Buka navigasi"
-      >
-        <Menu size={20} />
-      </button>
     </>
   );
 }
@@ -311,10 +350,7 @@ function SidebarGroup({
         aria-expanded={open}
       >
         <span>{label}</span>
-        <ChevronDown
-          size={14}
-          className={`transition-transform ${open ? "rotate-0" : "-rotate-90"}`}
-        />
+        <ChevronDown size={14} className={`transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
       </button>
       {open && <div className="mt-1 space-y-1">{children}</div>}
     </div>

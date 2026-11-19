@@ -206,8 +206,8 @@ export default function DashboardPage() {
 
   return (
     <Workspace
-      title="Dashboard"
-      description="Ringkasan 8 indikator biaya bulanan, porsi perusahaan, dan status validasi dari Laporan Penjualan Perusahaan."
+      title=""
+      description=""
       action={
         <Link href="/data-upload" className={buttonClass}>
           Unggah Laporan Penjualan

@@ -106,8 +106,8 @@ export default function ReportPage() {
 
   return (
     <Workspace
-      title="Report"
-      description="Pratinjau periode tervalidasi. Unduh laporan Excel tiga lembar atau rincian CSV dengan format kolom Unggah Data."
+      title=""
+      description=""
       action={
         <div className="flex flex-wrap gap-2">
           {(["xlsx", "csv"] as const).map((format) => (

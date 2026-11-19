@@ -74,10 +74,7 @@ export default function EvidencePage() {
   }
 
   return (
-    <Workspace
-      title="Evidence"
-      description="Riwayat dokumen Laporan Penjualan Perusahaan beserta waktu unggah dan identitas pengunggah. Tanggal dan jam ditampilkan dalam WIB."
-    >
+    <Workspace title="" description="">
       <Filters
         {...filter}
         loading={isLoading}
@@ -111,7 +108,7 @@ export default function EvidencePage() {
             history.reload();
             user.reload();
           }}
-          variant="table"
+          variant="table-inner"
           rows={5}
         />
         {!isLoading && !loadError && (
@@ -140,7 +137,7 @@ export default function EvidencePage() {
             loading={preview.loading}
             error={preview.error}
             onRetry={preview.reload}
-            variant="table"
+            variant="table-inner"
             rows={4}
           />
           {!preview.loading && preview.data && (
