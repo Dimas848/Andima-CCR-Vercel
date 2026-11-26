@@ -86,7 +86,8 @@ function ModalSearchField({
     return () => document.removeEventListener("mousedown", handleOutside);
   }, []);
 
-  const keyword = value.trim().toLowerCase();
+  const isAllSelected = value.trim().toLowerCase() === allLabel.toLowerCase();
+  const keyword = isAllSelected ? "" : value.trim().toLowerCase();
   const filtered = keyword
     ? options.filter(
         (item) =>
@@ -142,12 +143,12 @@ function ModalSearchField({
           <button
             type="button"
             onClick={() => {
-              onChange("");
+              onChange(allLabel);
               onClearError();
               setOpen(false);
             }}
             className={`flex w-full items-center justify-between px-3.5 py-2 text-left text-sm transition-colors hover:bg-sky-50 ${
-              !value ? "bg-sky-50 font-semibold text-sky-700" : "text-slate-700"
+              isAllSelected ? "bg-sky-50 font-semibold text-sky-700" : "text-slate-700"
             }`}
           >
             <span>{allLabel}</span>
@@ -202,6 +203,9 @@ export default function TaxTracingPage() {
   const [draftCompany, setDraftCompany] = useState("");
   const [draftDest, setDraftDest] = useState("");
   const [filterErrors, setFilterErrors] = useState<("period" | "company" | "dest")[]>([]);
+
+  const allCompaniesLabel = isEn ? "All companies" : "Semua perusahaan";
+  const allDestsLabel = isEn ? "All destinations" : "Semua destinasi";
 
   const activeOptionsPeriod = filterOpen && draftPeriod ? draftPeriod : filter.period;
 
@@ -338,8 +342,12 @@ export default function TaxTracingPage() {
   const destOptions = useMemo(() => {
     const records = options.data?.records ?? [];
     const companyInput = draftCompany.trim().toLowerCase();
+    const isAllCompany =
+      !companyInput ||
+      companyInput === "all" ||
+      companyInput === allCompaniesLabel.toLowerCase();
 
-    const matchedCompanyNames = companyInput
+    const matchedCompanyNames = !isAllCompany
       ? new Set(
           companyOptions
             .filter(
@@ -358,7 +366,7 @@ export default function TaxTracingPage() {
     return [...new Set(matchedRecords.map((row) => row.dest))]
       .filter(Boolean)
       .map((value) => ({ value, label: value }));
-  }, [options.data?.records, companyOptions, draftCompany]);
+  }, [options.data?.records, companyOptions, draftCompany, allCompaniesLabel]);
 
   function openFilterModal() {
     setDraftPeriod(filter.period);
@@ -377,7 +385,11 @@ export default function TaxTracingPage() {
 
     let resolvedCompany = "ALL";
     const companyInput = draftCompany.trim().toLowerCase();
-    if (companyInput) {
+    if (!companyInput) {
+      invalid.push("company");
+    } else if (companyInput === "all" || companyInput === allCompaniesLabel.toLowerCase()) {
+      resolvedCompany = "ALL";
+    } else {
       const exact = companyOptions.find(
         (item) =>
           item.value.toLowerCase() === companyInput ||
@@ -399,7 +411,11 @@ export default function TaxTracingPage() {
 
     let resolvedDest = "ALL";
     const destInput = draftDest.trim().toLowerCase();
-    if (destInput) {
+    if (!destInput) {
+      invalid.push("dest");
+    } else if (destInput === "all" || destInput === allDestsLabel.toLowerCase()) {
+      resolvedDest = "ALL";
+    } else {
       const exact = destOptions.find((item) => item.value.toLowerCase() === destInput);
       const partial = exact ?? destOptions.find((item) => item.value.toLowerCase().includes(destInput));
       if (partial) {
@@ -677,7 +693,7 @@ export default function TaxTracingPage() {
               <ModalSearchField
                 label={isEn ? "Company" : "Perusahaan"}
                 value={draftCompany}
-                allLabel={isEn ? "All companies" : "Semua perusahaan"}
+                allLabel={allCompaniesLabel}
                 options={companyOptions}
                 hasError={filterErrors.includes("company")}
                 onChange={(next) => {
@@ -690,7 +706,7 @@ export default function TaxTracingPage() {
               <ModalSearchField
                 label={isEn ? "City / Destination" : "Kota/Destinasi"}
                 value={draftDest}
-                allLabel={isEn ? "All destinations" : "Semua destinasi"}
+                allLabel={allDestsLabel}
                 options={destOptions}
                 hasError={filterErrors.includes("dest")}
                 onChange={setDraftDest}
@@ -732,7 +748,7 @@ export default function TaxTracingPage() {
       {detail && data && (
         <Modal
           title={`${detail} · ${formatPeriodLabel(filter.period, lang)} · ${
-            dest === "ALL" ? (isEn ? "All destinations" : "Semua destinasi") : dest
+            dest === "ALL" ? allDestsLabel : dest
           }`}
           onClose={() => setDetail(null)}
         >
