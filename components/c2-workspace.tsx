@@ -354,7 +354,7 @@ function SearchCombobox({
           role="combobox"
           aria-expanded={open}
           aria-autocomplete="list"
-          placeholder="Search"
+          placeholder={isEn ? "Search" : "Cari"}
           value={open ? searchText : isFiltered ? value : ""}
           onFocus={() => {
             setSearchText(isFiltered ? value : "");

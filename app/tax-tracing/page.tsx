@@ -81,7 +81,7 @@ function ModalSearchField({
           type="text"
           role="combobox"
           aria-expanded={open}
-          placeholder="Search"
+          placeholder={isEn ? "Search" : "Cari"}
           value={value}
           onFocus={() => {
             setOpen(true);

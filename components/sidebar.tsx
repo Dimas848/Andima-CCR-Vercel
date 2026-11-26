@@ -17,15 +17,15 @@ type SidebarProps = {
 
 type Account = { name: string; role: string; initials: string };
 
-const ROUTE_TITLES: Record<string, { id: string; en: string }> = {
-  "/dashboard": { id: "Dashboard", en: "Dashboard" },
-  "/data-upload": { id: "Data Upload", en: "Data Upload" },
-  "/customer-cost": { id: "Customer Cost", en: "Customer Cost" },
-  "/tax-tracing": { id: "Tax Component Tracing", en: "Tax Component Tracing" },
-  "/evidence": { id: "Evidence", en: "Evidence" },
-  "/monthly-closing": { id: "Validation", en: "Validation" },
-  "/export-report": { id: "Report", en: "Report" },
-};
+const MENU_ITEMS: { href: string; id: string; en: string }[] = [
+  { href: "/dashboard", id: "Dasbor", en: "Dashboard" },
+  { href: "/data-upload", id: "Unggah Data", en: "Data Upload" },
+  { href: "/customer-cost", id: "Biaya Pelanggan", en: "Customer Cost" },
+  { href: "/tax-tracing", id: "Pelacakan Komponen Pajak", en: "Tax Component Tracing" },
+  { href: "/evidence", id: "Bukti Dokumen", en: "Evidence" },
+  { href: "/monthly-closing", id: "Validasi", en: "Validation" },
+  { href: "/export-report", id: "Laporan", en: "Report" },
+];
 
 function HrmsLink({ label, href }: { label: string; href: string }) {
   const pathname = usePathname();
@@ -83,10 +83,8 @@ export default function Sidebar({
   const suppliedAccount = hasSuppliedAccount ? { name: userName!, role: userRole!, initials: userInitials! } : null;
   const account = suppliedAccount ?? loadedAccount ?? fallbackAccount;
 
-  const matchedTitle = Object.entries(ROUTE_TITLES).find(
-    ([route]) => pathname === route || pathname.startsWith(`${route}/`)
-  )?.[1];
-  const currentPageTitle = matchedTitle ? matchedTitle[lang] : isEn ? "CCR Module" : "Modul CCR";
+  const matchedItem = MENU_ITEMS.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+  const currentPageTitle = matchedItem ? matchedItem[lang] : isEn ? "CCR Module" : "Modul CCR";
 
   useEffect(() => {
     window.dispatchEvent(new CustomEvent("andima-sidebar-collapse", { detail: isCollapsed }));
@@ -324,13 +322,9 @@ export default function Sidebar({
 
             {isCcrOpen && (
               <div className="ml-5 mt-2 space-y-1 border-l border-[#d9e2fc]/20 pl-3">
-                <HrmsLink label="Dashboard" href="/dashboard" />
-                <HrmsLink label="Data Upload" href="/data-upload" />
-                <HrmsLink label="Customer Cost" href="/customer-cost" />
-                <HrmsLink label="Tax Component Tracing" href="/tax-tracing" />
-                <HrmsLink label="Evidence" href="/evidence" />
-                <HrmsLink label="Validation" href="/monthly-closing" />
-                <HrmsLink label="Report" href="/export-report" />
+                {MENU_ITEMS.map((item) => (
+                  <HrmsLink key={item.href} label={item[lang]} href={item.href} />
+                ))}
               </div>
             )}
           </div>
@@ -343,10 +337,10 @@ export default function Sidebar({
               onClick={() => void handleSignOut()}
               disabled={isSigningOut || isInternalSigningOut}
               className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-red-600 px-3 py-1.5 text-red-500 transition hover:bg-red-500/10 disabled:opacity-50"
-              aria-label="Logout"
-              title={`${account.name} (${account.role}) - Logout`}
+              aria-label={isEn ? "Logout" : "Keluar"}
+              title={`${account.name} (${account.role}) - ${isEn ? "Logout" : "Keluar"}`}
             >
-              <span className="text-center text-sm font-bold">Logout</span>
+              <span className="text-center text-sm font-bold">{isEn ? "Logout" : "Keluar"}</span>
             </button>
           </div>
         </div>
