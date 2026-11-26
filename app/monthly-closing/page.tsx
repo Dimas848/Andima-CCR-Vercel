@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { X } from "lucide-react";
 import {
   Workspace,
   Filters,
@@ -94,13 +95,19 @@ export default function ValidationPage() {
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
+  const [successPeriod, setSuccessPeriod] = useState<string | null>(null);
 
   const data = result.data;
   const isLoading = filter.loading || result.loading || user.loading;
   const loadError = filter.error || result.error || user.error;
   const locked = Boolean(data?.validation?.is_validated);
   const periodLabel = formatPeriodLabel(filter.period, lang);
+
+  useEffect(() => {
+    if (!successPeriod) return;
+    const timer = window.setTimeout(() => setSuccessPeriod(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [successPeriod]);
 
   const sum = (
     key: "sum_sub_total" | "sum_vat" | "sum_pph23" | "sum_others" | "sum_dip_iata" | "sum_total_cost"
@@ -123,11 +130,7 @@ export default function ValidationPage() {
       });
       setConfirm(false);
       setNotes("");
-      setNotice(
-        isEn
-          ? `Period ${periodLabel} has been successfully validated and locked.`
-          : `Periode ${periodLabel} berhasil divalidasi dan dikunci.`
-      );
+      setSuccessPeriod(filter.period);
       result.reload();
       audit.reload();
     } catch (err) {
@@ -139,13 +142,47 @@ export default function ValidationPage() {
 
   return (
     <Workspace title="" description="">
+      {successPeriod && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed right-4 top-4 z-50 w-[calc(100%-2rem)] max-w-md rounded-2xl border border-emerald-400/80 bg-emerald-50/85 px-5 py-4 shadow-lg shadow-emerald-950/5 backdrop-blur-md sm:right-6"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-extrabold uppercase tracking-wide text-emerald-950">
+                {isEn ? "SUCCEED" : "BERHASIL"}
+              </p>
+              <p className="mt-1 text-sm font-medium text-emerald-800">
+                {isEn
+                  ? `Period ${formatPeriodLabel(successPeriod, lang)} has been successfully validated and locked!`
+                  : `Periode ${formatPeriodLabel(successPeriod, lang)} berhasil divalidasi dan dikunci!`}
+              </p>
+              <p className="mt-0.5 text-sm text-emerald-700">
+                {isEn
+                  ? "Cost data and document evidence for this period are now permanently locked."
+                  : "Data biaya dan bukti dokumen periode ini kini telah terkunci permanen."}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSuccessPeriod(null)}
+              aria-label={isEn ? "Close notification" : "Tutup notifikasi"}
+              className="rounded-lg p-1 text-emerald-700/70 transition-colors hover:bg-emerald-200/50 hover:text-emerald-950"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       <Filters
         {...filter}
         loading={isLoading || audit.loading}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setNotes("");
-          setNotice(undefined);
+          setSuccessPeriod(null);
           setError(undefined);
         }}
         refresh={() => {
@@ -168,7 +205,6 @@ export default function ValidationPage() {
         />
       )}
 
-      {notice && <Notice>{notice}</Notice>}
       {error && !confirm && <Notice error>{error}</Notice>}
 
       {isLoading && !loadError && <ValidationSkeleton />}
