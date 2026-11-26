@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
-import { ChevronDown, FileText, Menu, X } from "lucide-react";
+import { ChevronDown, Menu, Wallet, X } from "lucide-react";
 import { useLang } from "@/lib/c2-i18n";
 
 type SidebarProps = {
@@ -314,7 +314,7 @@ export default function Sidebar({
               className="flex w-full items-center justify-between rounded-lg bg-[#155cfd] px-3 py-2.5 text-white shadow-sm"
             >
               <span className="flex items-center gap-2.5">
-                <FileText size={16} />
+                <Wallet size={16} />
                 <span>CCR</span>
               </span>
               <ChevronDown size={16} className={`transition-transform ${isCcrOpen ? "rotate-0" : "-rotate-90"}`} />

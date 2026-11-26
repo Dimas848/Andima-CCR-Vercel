@@ -30,6 +30,31 @@ import {
 } from "@/lib/c2-client";
 import { formatPeriodLabel, useLang } from "@/lib/c2-i18n";
 
+type SummaryBucket = {
+  customer_code: string;
+  company_name: string;
+  job_count: number;
+  total_sub_total: number;
+  total_vat_11: number;
+  total_pph_23: number;
+  total_others: number;
+  total_others_only: number;
+  total_dip_iata: number;
+  total_cost: number;
+};
+
+function readAmount(record: Record<string, unknown>, keys: string[]): number {
+  for (const key of keys) {
+    const raw = record[key];
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "string" && raw.trim() !== "") {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return 0;
+}
+
 function ModalSearchField({
   label,
   value,
@@ -189,17 +214,107 @@ export default function TaxTracingPage() {
       : null
   );
 
+  // Selalu kirim dest: "ALL" agar backend tidak memfilter kolom vw_c2_company_tax_tracing.dest yang tidak ada
   const result = useApi<TaxData>(
     filter.period
       ? query("/api/v1/cost-tax/company-tracing", {
           period: filter.period,
           company,
-          dest,
+          dest: "ALL",
         })
       : null
   );
 
-  const data = result.data;
+  // Filter berdasarkan destinasi & hitung ulang agregasi di frontend saat dest dipilih
+  const data = useMemo<TaxData | undefined>(() => {
+    const rawData = result.data;
+    if (!rawData) return undefined;
+    if (dest === "ALL") return rawData;
+
+    const targetDest = dest.trim().toLowerCase();
+    const filteredRecords = (rawData.records ?? []).filter(
+      (row) => (row.dest ?? "").trim().toLowerCase() === targetDest
+    );
+
+    const companyCodeMap = new Map(
+      (rawData.companies ?? []).map((item) => [item.company_name, item.customer_code])
+    );
+
+    const summaryMap = new Map<string, SummaryBucket>();
+
+    for (const row of filteredRecords) {
+      const r = row as unknown as Record<string, unknown>;
+      const companyName = row.company_name;
+      const customerCode =
+        (typeof r.customer_code === "string" && r.customer_code) ||
+        companyCodeMap.get(companyName) ||
+        companyName;
+
+      const subTotal = readAmount(r, ["sub_total", "total_sub_total", "dpp"]);
+      const vat11 = readAmount(r, ["vat_11", "vat_amount", "total_vat_11", "vat", "ppn"]);
+      const pph23 = readAmount(r, ["pph_23", "pph23_amount", "total_pph_23", "pph23"]);
+      const othersOnly = readAmount(r, ["others_only", "others_cost", "total_others_only", "others"]);
+      const dipIata = readAmount(r, ["dip_iata", "dip_iata_cost", "total_dip_iata"]);
+      const totalOthers = readAmount(r, ["total_others", "others"]) || othersOnly + dipIata;
+      const totalCost = readAmount(r, ["total_cost", "total"]);
+
+      const existing = summaryMap.get(companyName);
+      if (existing) {
+        existing.job_count += 1;
+        existing.total_sub_total += subTotal;
+        existing.total_vat_11 += vat11;
+        existing.total_pph_23 += pph23;
+        existing.total_others += totalOthers;
+        existing.total_others_only += othersOnly;
+        existing.total_dip_iata += dipIata;
+        existing.total_cost += totalCost;
+      } else {
+        summaryMap.set(companyName, {
+          customer_code: customerCode,
+          company_name: companyName,
+          job_count: 1,
+          total_sub_total: subTotal,
+          total_vat_11: vat11,
+          total_pph_23: pph23,
+          total_others: totalOthers,
+          total_others_only: othersOnly,
+          total_dip_iata: dipIata,
+          total_cost: totalCost,
+        });
+      }
+    }
+
+    const filteredCompanies = [...summaryMap.values()];
+    const filteredTotals = filteredCompanies.reduce(
+      (acc, item) => ({
+        sub_total: acc.sub_total + item.total_sub_total,
+        vat_amount: acc.vat_amount + item.total_vat_11,
+        pph23_amount: acc.pph23_amount + item.total_pph_23,
+        others_cost: acc.others_cost + item.total_others_only,
+        dip_iata_cost: acc.dip_iata_cost + item.total_dip_iata,
+        total_cost: acc.total_cost + item.total_cost,
+      }),
+      {
+        sub_total: 0,
+        vat_amount: 0,
+        pph23_amount: 0,
+        others_cost: 0,
+        dip_iata_cost: 0,
+        total_cost: 0,
+      }
+    );
+
+    return {
+      ...rawData,
+      records: filteredRecords,
+      companies: filteredCompanies,
+      totals: {
+        ...rawData.totals,
+        ...filteredTotals,
+      },
+    };
+  }, [result.data, dest]);
+
   const isLoading = filter.loading || result.loading;
   const loadError = filter.error || result.error || options.error;
 
@@ -220,13 +335,30 @@ export default function TaxTracingPage() {
     [options.data?.companies]
   );
 
-  const destOptions = useMemo(
-    () =>
-      [...new Set(options.data?.records.map((row) => row.dest) ?? [])]
-        .filter(Boolean)
-        .map((value) => ({ value, label: value })),
-    [options.data?.records]
-  );
+  const destOptions = useMemo(() => {
+    const records = options.data?.records ?? [];
+    const companyInput = draftCompany.trim().toLowerCase();
+
+    const matchedCompanyNames = companyInput
+      ? new Set(
+          companyOptions
+            .filter(
+              (item) =>
+                item.value.toLowerCase().includes(companyInput) ||
+                (item.badge && item.badge.toLowerCase().includes(companyInput))
+            )
+            .map((item) => item.value.toLowerCase())
+        )
+      : null;
+
+    const matchedRecords = matchedCompanyNames
+      ? records.filter((row) => matchedCompanyNames.has(row.company_name.toLowerCase()))
+      : records;
+
+    return [...new Set(matchedRecords.map((row) => row.dest))]
+      .filter(Boolean)
+      .map((value) => ({ value, label: value }));
+  }, [options.data?.records, companyOptions, draftCompany]);
 
   function openFilterModal() {
     setDraftPeriod(filter.period);
