@@ -94,8 +94,11 @@ function getDb(session: Session): SupabaseClient {
   return session.db;
 }
 
-function textParam(value: unknown, name: string, max = 255) {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > max || /[\u0000-\u001f]/.test(value)) {
+function textParam(value: unknown, name: string, max = 255, allowMultiline = false) {
+  const forbidden = allowMultiline
+    ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/
+    : /[\u0000-\u001f]/;
+  if (typeof value !== "string" || !value.trim() || value.trim().length > max || forbidden.test(value)) {
     throw new ApiError(400, `${name} tidak valid.`);
   }
   return value.trim();
@@ -309,7 +312,7 @@ export const periods = api(async (request) => {
   const session = await authorize(request);
   const db = getDb(session);
 
-const rows = await allRows((start, end) =>
+  const rows = await allRows((start, end) =>
     db.from("vw_c2_company_monthly_summary_v2").select("periode,customer_code").order("periode").order("customer_code").range(start, end)
   );
 
@@ -378,8 +381,8 @@ export const taxTracing = api(async (request) => {
     return query;
   });
 
-  // 2. Fallback ke view v1 jika v2 kosong
-  if (!rows.length) {
+  // 2. Fallback ke view v1 hanya jika dest === "ALL" (karena view v1 tidak punya kolom dest)
+  if (!rows.length && dest === "ALL") {
     rows = await allRows((start, end) => {
       let query = db
         .from("vw_c2_company_tax_tracing")
@@ -388,7 +391,6 @@ export const taxTracing = api(async (request) => {
         .order("customer_code")
         .range(start, end);
       if (company !== "ALL") query = query.eq(companyField(company), company);
-      if (dest !== "ALL") query = query.eq("dest", dest);
       return query;
     });
   }
@@ -601,7 +603,7 @@ export const validatePeriod = api(async (request) => {
   const session = await authorize(request, "validate");
   const payload = await body(request);
   const period = periodValue(payload.period);
-  const notes = textParam(payload.notes, "Catatan validasi", 1000);
+  const notes = textParam(payload.notes, "Catatan validasi", 1000, true);
   const db = service(session);
   await unlocked(db, period);
   const result = await db.rpc("c2_validate_period", { p_period: period, p_notes: notes, p_actor_id: session.user.id });
