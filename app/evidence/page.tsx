@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Workspace,
   Filters,
@@ -17,25 +17,21 @@ import {
   api,
   money,
   query,
-  timestamp,
   useApi,
   usePeriod,
   type Evidence,
   type SalesRecord,
   type UserInfo,
 } from "@/lib/c2-client";
+import { formatPeriodLabel, formatTimestamp, useLang } from "@/lib/c2-i18n";
 
 interface Preview {
   evidence: Evidence;
   records: SalesRecord[];
 }
 
-// Cache ringan per periode, akun, dan pratinjau agar tampilan instan
-let cachedUser: UserInfo | undefined;
-const evidenceHistoryCache = new Map<string, Evidence[]>();
-const evidencePreviewCache = new Map<string, Preview>();
-
 export default function EvidencePage() {
+  const { lang, isEn } = useLang();
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
   const history = useApi<Evidence[]>(
@@ -51,29 +47,7 @@ export default function EvidencePage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  useEffect(() => {
-    if (user.data) cachedUser = user.data;
-  }, [user.data]);
-
-  useEffect(() => {
-    if (filter.period && history.data) {
-      evidenceHistoryCache.set(filter.period, history.data);
-    }
-  }, [filter.period, history.data]);
-
-  useEffect(() => {
-    if (selected && preview.data) {
-      evidencePreviewCache.set(selected.upload_id, preview.data);
-    }
-  }, [selected, preview.data]);
-
-  const userData = user.data ?? cachedUser;
-  const historyData = history.data ?? (filter.period ? evidenceHistoryCache.get(filter.period) : undefined);
-  const previewData = preview.data ?? (selected ? evidencePreviewCache.get(selected.upload_id) : undefined);
-
-  const isLoading = (!historyData || !userData) && (filter.loading || history.loading || user.loading);
-  const isRefreshing = filter.loading || history.loading || user.loading;
-  const isPreviewLoading = !previewData && preview.loading;
+  const isLoading = filter.loading || history.loading || user.loading;
   const loadError = filter.error || history.error || user.error;
 
   async function remove() {
@@ -85,19 +59,21 @@ export default function EvidencePage() {
         `/api/v1/cost-evidence/history/${encodeURIComponent(deletion.upload_id)}`,
         { method: "DELETE" }
       );
-      evidencePreviewCache.delete(deletion.upload_id);
-      if (filter.period) evidenceHistoryCache.delete(filter.period);
       setNotice(
-        `Bukti dokumen ${deletion.file_name} telah dihapus. Jejak audit penghapusan disimpan.${
-          deleted.warning ? ` ${deleted.warning}` : ""
-        }`
+        isEn
+          ? `Document evidence ${deletion.file_name} has been deleted. Deletion audit trail saved.${
+              deleted.warning ? ` ${deleted.warning}` : ""
+            }`
+          : `Bukti dokumen ${deletion.file_name} telah dihapus. Jejak audit penghapusan disimpan.${
+              deleted.warning ? ` ${deleted.warning}` : ""
+            }`
       );
       setDeletion(null);
       setSelected(null);
       history.reload();
       filter.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Penghapusan gagal.");
+      setError(err instanceof Error ? err.message : isEn ? "Deletion failed." : "Penghapusan gagal.");
     } finally {
       setBusy(false);
     }
@@ -107,7 +83,7 @@ export default function EvidencePage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isRefreshing}
+        loading={isLoading}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setSelected(null);
@@ -124,13 +100,23 @@ export default function EvidencePage() {
 
       {!isLoading && !loadError && (
         <Notice>
-          {userData?.canDelete
-            ? "Hak hapus tersedia untuk Manajer yang berwenang pada periode yang masih terbuka. Periode yang sudah tervalidasi otomatis terkunci."
+          {user.data?.canDelete
+            ? isEn
+              ? "Delete permission is available for authorized Managers on open periods. Validated periods are automatically locked."
+              : "Hak hapus tersedia untuk Manajer yang berwenang pada periode yang masih terbuka. Periode yang sudah tervalidasi otomatis terkunci."
+            : isEn
+            ? "Read and preview access only. Deleting document evidence is restricted to authorized Managers."
             : "Akses baca dan pratinjau. Penghapusan bukti dokumen hanya tersedia bagi Manajer yang berwenang."}
         </Notice>
       )}
 
-      <Card title="Riwayat Unggahan & Log Stempel Waktu Bukti">
+      <Card
+        title={
+          isEn
+            ? "Upload History & Document Timestamp Log"
+            : "Riwayat Unggahan & Log Stempel Waktu Bukti"
+        }
+      >
         <LoadState
           loading={isLoading}
           error={!isLoading ? loadError : undefined}
@@ -143,10 +129,10 @@ export default function EvidencePage() {
         />
         {!isLoading && !loadError && (
           <HistoryTable
-            rows={historyData ?? []}
+            rows={history.data ?? []}
             onPreview={setSelected}
             onDelete={
-              userData?.canDelete
+              user.data?.canDelete
                 ? (row) => {
                     setDeletion(row);
                     setError(undefined);
@@ -158,27 +144,33 @@ export default function EvidencePage() {
       </Card>
 
       {selected && (
-        <Modal title={`Pratinjau · ${selected.file_name}`} onClose={() => setSelected(null)}>
+        <Modal
+          title={`${isEn ? "Preview" : "Pratinjau"} · ${selected.file_name}`}
+          onClose={() => setSelected(null)}
+        >
           <p className="text-sm">
-            Periode: {selected.period_month} · Diunggah: {timestamp(selected.uploaded_at)} · Oleh:{" "}
-            {selected.uploaded_by_name || "Belum tercatat"}
+            {isEn ? "Period" : "Periode"}: {formatPeriodLabel(selected.period_month, lang)} ·{" "}
+            {isEn ? "Uploaded" : "Diunggah"}: {formatTimestamp(selected.uploaded_at, lang)} ·{" "}
+            {isEn ? "By" : "Oleh"}: {selected.uploaded_by_name || (isEn ? "Not recorded" : "Belum tercatat")}
           </p>
           <LoadState
-            loading={isPreviewLoading}
+            loading={preview.loading}
             error={preview.error}
             onRetry={preview.reload}
             variant="table-inner"
             rows={4}
           />
-          {!isPreviewLoading && previewData && (
+          {!preview.loading && preview.data && (
             <>
               <p className="text-sm">
-                {previewData.records.length} rincian tersimpan · Total log:{" "}
-                {money(previewData.evidence.total_cost_amount)}
+                {preview.data.records.length} {isEn ? "saved records" : "rincian tersimpan"} ·{" "}
+                {isEn ? "Log total" : "Total log"}: {money(preview.data.evidence.total_cost_amount)}
               </p>
-              <SalesTable records={previewData.records} />
+              <SalesTable records={preview.data.records} />
               <p className="text-xs text-slate-500">
-                Pratinjau menampilkan isi laporan yang tersimpan dan terhubung ke bukti dokumen ini.
+                {isEn
+                  ? "Preview displays the saved report contents linked to this document evidence."
+                  : "Pratinjau menampilkan isi laporan yang tersimpan dan terhubung ke bukti dokumen ini."}
               </p>
             </>
           )}
@@ -187,7 +179,7 @@ export default function EvidencePage() {
 
       {deletion && (
         <Modal
-          title="Hapus Bukti Dokumen"
+          title={isEn ? "Delete Document Evidence" : "Hapus Bukti Dokumen"}
           onClose={() => {
             setDeletion(null);
             setError(undefined);
@@ -195,8 +187,15 @@ export default function EvidencePage() {
           busy={busy}
         >
           <Notice error>
-            Penghapusan {deletion.file_name} juga akan menghapus rincian biaya yang terhubung pada periode{" "}
-            {deletion.period_month}. Tindakan ini akan dicatat dalam jejak audit.
+            {isEn
+              ? `Deleting ${deletion.file_name} will also remove the linked cost records for period ${formatPeriodLabel(
+                  deletion.period_month,
+                  lang
+                )}. This action will be recorded in the audit trail.`
+              : `Penghapusan ${deletion.file_name} juga akan menghapus rincian biaya yang terhubung pada periode ${formatPeriodLabel(
+                  deletion.period_month,
+                  lang
+                )}. Tindakan ini akan dicatat dalam jejak audit.`}
           </Notice>
           {error && <Notice error>{error}</Notice>}
           <div className="flex justify-end gap-3">
@@ -206,7 +205,7 @@ export default function EvidencePage() {
               disabled={busy}
               onClick={() => setDeletion(null)}
             >
-              Batal
+              {isEn ? "Cancel" : "Batal"}
             </button>
             <button
               type="button"
@@ -214,7 +213,13 @@ export default function EvidencePage() {
               disabled={busy}
               onClick={() => void remove()}
             >
-              {busy ? "Menghapus…" : "Hapus bukti dan rinciannya"}
+              {busy
+                ? isEn
+                  ? "Deleting…"
+                  : "Menghapus…"
+                : isEn
+                ? "Delete evidence & records"
+                : "Hapus bukti dan rinciannya"}
             </button>
           </div>
         </Modal>

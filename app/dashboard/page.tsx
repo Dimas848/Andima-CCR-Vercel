@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
   Workspace,
   Card,
@@ -25,6 +25,7 @@ import {
   type DashboardData,
   type CustomerData,
 } from "@/lib/c2-client";
+import { formatPeriodLabel, useLang } from "@/lib/c2-i18n";
 
 const colors = [
   "#087ebd",
@@ -37,25 +38,20 @@ const colors = [
   "#65a30d",
 ];
 
-// Cache ringan per periode agar pindah halaman atau ganti periode tampil instan
-const dashboardCache = new Map<string, DashboardData>();
-const detailsCache = new Map<string, CustomerData>();
-
 function DashboardSkeleton() {
+  const { isEn } = useLang();
   return (
     <div
       role="status"
       aria-busy="true"
-      aria-label="Memuat dasbor"
+      aria-label={isEn ? "Loading dashboard" : "Memuat dasbor"}
       className="space-y-6 animate-[pulse_0.85s_ease-in-out_infinite]"
     >
-      {/* 1. Skeleton Badge Status & Periode */}
       <div className="flex items-center gap-3">
         <div className="h-6 w-32 rounded-full bg-slate-200" />
         <div className="h-4 w-28 rounded bg-slate-200" />
       </div>
 
-      {/* 2. Skeleton 8 Kartu KPI (4 Kolom x 2 Baris) */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 8 }).map((_, i) => (
           <div
@@ -69,7 +65,6 @@ function DashboardSkeleton() {
         ))}
       </div>
 
-      {/* 3. Skeleton Grid 2 Kolom: Porsi Biaya & Perbandingan per Pelanggan */}
       <div className="grid gap-5 xl:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 h-5 w-48 rounded bg-slate-200" />
@@ -111,7 +106,6 @@ function DashboardSkeleton() {
         </div>
       </div>
 
-      {/* 4. Skeleton Card Tabel Ringkasan Perusahaan */}
       <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 h-5 w-44 rounded bg-slate-200" />
         <div className="overflow-hidden rounded-lg border border-slate-200">
@@ -140,6 +134,7 @@ function DashboardSkeleton() {
 }
 
 export default function DashboardPage() {
+  const { lang, isEn } = useLang();
   const filter = usePeriod();
   const [company, setCompany] = useFilter("company");
   const [hovered, setHovered] = useState<string | null>(null);
@@ -162,23 +157,8 @@ export default function DashboardPage() {
       : null
   );
 
-  useEffect(() => {
-    if (filter.period && all.data) {
-      dashboardCache.set(filter.period, all.data);
-    }
-  }, [filter.period, all.data]);
-
-  useEffect(() => {
-    if (filter.period && details.data) {
-      detailsCache.set(filter.period, details.data);
-    }
-  }, [filter.period, details.data]);
-
-  const data = all.data ?? (filter.period ? dashboardCache.get(filter.period) : undefined);
-  const detailsData = details.data ?? (filter.period ? detailsCache.get(filter.period) : undefined);
-
-  const isLoading = !data && (filter.loading || all.loading);
-  const isRefreshing = filter.loading || all.loading;
+  const data = all.data;
+  const isLoading = filter.loading || all.loading;
   const errorMsg = filter.error || all.error;
 
   const allCompanies = useMemo(() => data?.companies ?? [], [data?.companies]);
@@ -192,10 +172,10 @@ export default function DashboardPage() {
   ) => rows.reduce((total, row) => total + amount(row[key]), 0);
 
   const issueCount = useMemo(() => {
-    const records = detailsData?.records ?? [];
+    const records = details.data?.records ?? [];
     const scoped = company === "ALL" ? records : records.filter((r) => r.company_name === company);
     return countRecordsIssues(scoped);
-  }, [detailsData?.records, company]);
+  }, [details.data?.records, company]);
 
   const chartTotal = useMemo(
     () => rows.reduce((acc, row) => acc + amount(row.sum_total_cost), 0),
@@ -223,7 +203,6 @@ export default function DashboardPage() {
   }, [rows]);
 
   const focused = rows.find((row) => row.customer_code === hovered);
-  const detailsLoading = !detailsData && details.loading;
 
   return (
     <Workspace
@@ -231,13 +210,13 @@ export default function DashboardPage() {
       description=""
       action={
         <Link href="/data-upload" className={buttonClass}>
-          Unggah Laporan Penjualan
+          {isEn ? "Upload Sales Report" : "Unggah Laporan Penjualan"}
         </Link>
       }
     >
       <Filters
         {...filter}
-        loading={isRefreshing}
+        loading={isLoading}
         onPeriod={filter.setPeriod}
         company={company}
         companies={allCompanies}
@@ -253,50 +232,98 @@ export default function DashboardPage() {
       {isLoading && !errorMsg && <DashboardSkeleton />}
 
       {!isLoading && !filter.period && !errorMsg && (
-        <Notice>Belum ada periode biaya. Mulai dari menu Unggah Data.</Notice>
+        <Notice>
+          {isEn
+            ? "No cost periods yet. Start from the Data Upload menu."
+            : "Belum ada periode biaya. Mulai dari menu Unggah Data."}
+        </Notice>
       )}
 
       {!isLoading && data && (
         <>
           <div className="flex items-center gap-3 text-sm">
             <Status validated={Boolean(data.validation?.is_validated)} />
-            <span className="font-medium text-slate-500">{filter.period}</span>
+            <span className="font-medium text-slate-500">{formatPeriodLabel(filter.period, lang)}</span>
           </div>
 
           <Kpis
             items={[
-              { label: "1. Total Perusahaan", value: number(rows.length), detail: "Pelanggan aktif periode ini" },
-              { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(sum("sum_sub_total")), detail: "Basis perhitungan pajak" },
-              { label: "3. PPN (VAT 11%)", value: money(sum("sum_vat")), detail: "Pajak Pertambahan Nilai" },
-              { label: "4. PPh 23 (2%)", value: money(sum("sum_pph23")), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Lain-lain", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
-              { label: "6. DIP IATA", value: money(sum("sum_dip_iata")), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Kendala",
-                value: detailsLoading ? "Memuat…" : `${number(issueCount)} Kendala`,
-                detail: detailsLoading
-                  ? "Memeriksa transaksi"
+                label: isEn ? "1. Total Companies" : "1. Total Perusahaan",
+                value: number(rows.length),
+                detail: isEn ? "Active customers this period" : "Pelanggan aktif periode ini",
+              },
+              {
+                label: isEn ? "2. Tax Base (DPP)" : "2. DPP (Dasar Pengenaan Pajak)",
+                value: money(sum("sum_sub_total")),
+                detail: isEn ? "Tax calculation basis" : "Basis perhitungan pajak",
+              },
+              {
+                label: isEn ? "3. VAT (11%)" : "3. PPN (VAT 11%)",
+                value: money(sum("sum_vat")),
+                detail: isEn ? "Value-Added Tax" : "Pajak Pertambahan Nilai",
+              },
+              {
+                label: isEn ? "4. WHT PPh 23 (2%)" : "4. PPh 23 (2%)",
+                value: money(sum("sum_pph23")),
+                detail: isEn ? "Withheld by customer" : "Dipungut oleh pelanggan",
+              },
+              {
+                label: isEn ? "5. Others" : "5. Lain-lain",
+                value: money(sum("sum_others")),
+                detail: isEn ? "PPh 22 / PPh 26 / other costs" : "PPh 22 / PPh 26 / biaya lain",
+              },
+              {
+                label: "6. DIP IATA",
+                value: money(sum("sum_dip_iata")),
+                detail: isEn ? "IATA organization fees" : "Biaya organisasi IATA",
+              },
+              {
+                label: isEn ? "7. Total Monthly Cost" : "7. Total Biaya Bulanan",
+                value: money(sum("sum_total_cost")),
+                detail: isEn ? "Accumulation of all costs" : "Akumulasi seluruh biaya",
+              },
+              {
+                label: isEn ? "8. Total Issues" : "8. Total Kendala",
+                value: details.loading
+                  ? isEn
+                    ? "Loading…"
+                    : "Memuat…"
+                  : `${number(issueCount)} ${isEn ? "Issues" : "Kendala"}`,
+                detail: details.loading
+                  ? isEn
+                    ? "Checking transactions"
+                    : "Memeriksa transaksi"
                   : issueCount > 0
-                  ? "Perlu pemeriksaan pada rincian"
+                  ? isEn
+                    ? "Review required in details"
+                    : "Perlu pemeriksaan pada rincian"
+                  : isEn
+                  ? "All transactions valid"
                   : "Seluruh transaksi sesuai",
-                alert: !detailsLoading && issueCount > 0,
+                alert: !details.loading && issueCount > 0,
               },
             ]}
           />
 
           <div className="grid gap-5 xl:grid-cols-2">
-            <Card title="Porsi Biaya Perusahaan (%)">
+            <Card title={isEn ? "Company Cost Share (%)" : "Porsi Biaya Perusahaan (%)"}>
               {positive ? (
                 <div className="flex flex-wrap items-center gap-6">
                   <div
                     role="img"
-                    aria-label="Distribusi total biaya perusahaan; nilai tersedia pada daftar di sebelah grafik"
+                    aria-label={
+                      isEn
+                        ? "Company cost distribution; values available in the list beside the chart"
+                        : "Distribusi total biaya perusahaan; nilai tersedia pada daftar di sebelah grafik"
+                    }
                     className="mx-auto flex h-52 w-52 shrink-0 items-center justify-center rounded-full"
                     style={{ background: `conic-gradient(${slices.join(",")})` }}
                   >
                     <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full bg-white p-4 text-center shadow-inner">
-                      <span className="text-xs text-slate-500">{focused?.customer_code || "Total terpilih"}</span>
+                      <span className="text-xs text-slate-500">
+                        {focused?.customer_code || (isEn ? "Selected total" : "Total terpilih")}
+                      </span>
                       <strong className="mt-1 text-sm font-bold text-slate-800">
                         {money(focused?.sum_total_cost ?? chartTotal)}
                       </strong>
@@ -329,15 +356,19 @@ export default function DashboardPage() {
                 </div>
               ) : (
                 <p className="py-12 text-center text-sm text-slate-500">
-                  Grafik porsi tersedia untuk total biaya positif tanpa komponen negatif. Nilai sumber tetap tersedia dalam tabel.
+                  {isEn
+                    ? "Share chart is available for positive total costs without negative components. Source values remain available in the table."
+                    : "Grafik porsi tersedia untuk total biaya positif tanpa komponen negatif. Nilai sumber tetap tersedia dalam tabel."}
                 </p>
               )}
               <p className="mt-4 text-xs text-slate-400">
-                Persentase menggunakan total seluruh perusahaan pada periode. Area abu-abu adalah porsi perusahaan di luar filter. Pilih nama perusahaan untuk memfilter.
+                {isEn
+                  ? "Percentages use the total of all companies in the period. Gray area represents companies outside the filter. Click a company name to filter."
+                  : "Persentase menggunakan total seluruh perusahaan pada periode. Area abu-abu adalah porsi perusahaan di luar filter. Pilih nama perusahaan untuk memfilter."}
               </p>
             </Card>
 
-            <Card title="Perbandingan Biaya per Pelanggan">
+            <Card title={isEn ? "Cost Comparison per Customer" : "Perbandingan Biaya per Pelanggan"}>
               <div className="max-h-80 space-y-3.5 overflow-y-auto pr-1">
                 {rows.map((row) => {
                   const costVal = amount(row.sum_total_cost);
@@ -368,13 +399,15 @@ export default function DashboardPage() {
                 })}
 
                 {!rows.length && (
-                  <p className="py-10 text-center text-sm text-slate-500">Belum ada rincian biaya.</p>
+                  <p className="py-10 text-center text-sm text-slate-500">
+                    {isEn ? "No cost details available yet." : "Belum ada rincian biaya."}
+                  </p>
                 )}
               </div>
             </Card>
           </div>
 
-          <Card title="Ringkasan Biaya & Pajak Perusahaan">
+          <Card title={isEn ? "Company Cost & Tax Summary" : "Ringkasan Biaya & Pajak Perusahaan"}>
             <SummaryTable rows={rows} />
           </Card>
         </>

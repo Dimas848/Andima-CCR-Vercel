@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Workspace,
@@ -24,7 +24,6 @@ import {
   money,
   number,
   query,
-  timestamp,
   useApi,
   usePeriod,
   type Audit,
@@ -32,17 +31,13 @@ import {
   type CustomerData,
   type UserInfo,
 } from "@/lib/c2-client";
-
-// Cache ringan per periode & akun agar perpindahan halaman/periode tampil instan
-let cachedUser: UserInfo | undefined;
-const validationCache = new Map<string, ValidationData>();
-const validationDetailsCache = new Map<string, CustomerData>();
-const auditCache = new Map<string, Audit[]>();
+import { formatPeriodLabel, formatTimestamp, useLang } from "@/lib/c2-i18n";
 
 function ValidationSkeleton() {
+  const { isEn } = useLang();
   return (
     <>
-      <Card title="Status Periode">
+      <Card title={isEn ? "Period Status" : "Status Periode"}>
         <div className="animate-[pulse_0.85s_ease-in-out_infinite] space-y-3">
           <div className="h-4 w-2/3 rounded bg-slate-200" />
           <div className="h-4 w-1/2 rounded bg-slate-200" />
@@ -64,11 +59,17 @@ function ValidationSkeleton() {
         ))}
       </div>
 
-      <Card title="Pemeriksaan Stempel Waktu Bukti Dokumen">
+      <Card
+        title={
+          isEn
+            ? "Document Evidence Timestamp Verification"
+            : "Pemeriksaan Stempel Waktu Bukti Dokumen"
+        }
+      >
         <LoadState loading variant="table-inner" rows={4} />
       </Card>
 
-      <Card title="Jejak Audit Pengesahan">
+      <Card title={isEn ? "Validation Audit Trail" : "Jejak Audit Pengesahan"}>
         <LoadState loading variant="table-inner" rows={3} />
       </Card>
     </>
@@ -76,6 +77,7 @@ function ValidationSkeleton() {
 }
 
 export default function ValidationPage() {
+  const { lang, isEn } = useLang();
   const filter = usePeriod();
   const user = useApi<UserInfo>("/api/auth/me");
   const result = useApi<ValidationData>(
@@ -94,47 +96,19 @@ export default function ValidationPage() {
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
 
-  useEffect(() => {
-    if (user.data) cachedUser = user.data;
-  }, [user.data]);
-
-  useEffect(() => {
-    if (filter.period && result.data) {
-      validationCache.set(filter.period, result.data);
-    }
-  }, [filter.period, result.data]);
-
-  useEffect(() => {
-    if (filter.period && details.data) {
-      validationDetailsCache.set(filter.period, details.data);
-    }
-  }, [filter.period, details.data]);
-
-  useEffect(() => {
-    if (filter.period && audit.data) {
-      auditCache.set(filter.period, audit.data);
-    }
-  }, [filter.period, audit.data]);
-
-  const userData = user.data ?? cachedUser;
-  const data = result.data ?? (filter.period ? validationCache.get(filter.period) : undefined);
-  const detailsData = details.data ?? (filter.period ? validationDetailsCache.get(filter.period) : undefined);
-  const auditData = audit.data ?? (filter.period ? auditCache.get(filter.period) : undefined);
-
-  const isLoading = (!data || !userData) && (filter.loading || result.loading || user.loading);
-  const isRefreshing = filter.loading || result.loading || user.loading || details.loading || audit.loading;
-  const detailsLoading = !detailsData && details.loading;
-  const auditLoading = !auditData && audit.loading;
+  const data = result.data;
+  const isLoading = filter.loading || result.loading || user.loading;
   const loadError = filter.error || result.error || user.error;
   const locked = Boolean(data?.validation?.is_validated);
+  const periodLabel = formatPeriodLabel(filter.period, lang);
 
   const sum = (
     key: "sum_sub_total" | "sum_vat" | "sum_pph23" | "sum_others" | "sum_dip_iata" | "sum_total_cost"
   ) => data?.companies.reduce((total, row) => total + amount(row[key]), 0) ?? 0;
 
   const issueCount = useMemo(
-    () => countRecordsIssues(detailsData?.records ?? []),
-    [detailsData?.records]
+    () => countRecordsIssues(details.data?.records ?? []),
+    [details.data?.records]
   );
 
   async function lock() {
@@ -147,17 +121,17 @@ export default function ValidationPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ period: filter.period, notes }),
       });
-      if (filter.period) {
-        validationCache.delete(filter.period);
-        auditCache.delete(filter.period);
-      }
       setConfirm(false);
       setNotes("");
-      setNotice(`Periode ${filter.period} berhasil divalidasi dan dikunci.`);
+      setNotice(
+        isEn
+          ? `Period ${periodLabel} has been successfully validated and locked.`
+          : `Periode ${periodLabel} berhasil divalidasi dan dikunci.`
+      );
       result.reload();
       audit.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Validasi gagal.");
+      setError(err instanceof Error ? err.message : isEn ? "Validation failed." : "Validasi gagal.");
     } finally {
       setBusy(false);
     }
@@ -167,7 +141,7 @@ export default function ValidationPage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isRefreshing}
+        loading={isLoading || audit.loading}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setNotes("");
@@ -200,35 +174,51 @@ export default function ValidationPage() {
       {isLoading && !loadError && <ValidationSkeleton />}
 
       {!isLoading && !loadError && !filter.period && (
-        <Notice>Belum ada periode yang dapat diperiksa.</Notice>
+        <Notice>
+          {isEn ? "No periods available to review yet." : "Belum ada periode yang dapat diperiksa."}
+        </Notice>
       )}
 
       {!isLoading && !loadError && data && (
         <>
-          <Card title={`Status Periode · ${filter.period}`} action={<Status validated={locked} />}>
+          <Card
+            title={`${isEn ? "Period Status" : "Status Periode"} · ${periodLabel}`}
+            action={<Status validated={locked} />}
+          >
             <p className="text-sm">
               {data.history.length
-                ? `${data.history.length} dokumen unggahan tercatat, mencakup ${data.companies.reduce(
-                    (total, row) => total + Number(row.total_jobs_count),
-                    0
-                  )} rincian biaya.`
+                ? isEn
+                  ? `${data.history.length} uploaded document(s) recorded, covering ${data.companies.reduce(
+                      (total, row) => total + Number(row.total_jobs_count),
+                      0
+                    )} cost record(s).`
+                  : `${data.history.length} dokumen unggahan tercatat, mencakup ${data.companies.reduce(
+                      (total, row) => total + Number(row.total_jobs_count),
+                      0
+                    )} rincian biaya.`
+                : isEn
+                ? "No Company Sales Report uploaded for this period yet."
                 : "Belum ada Laporan Penjualan Perusahaan pada periode ini."}
             </p>
             {locked ? (
               <div className="mt-4 space-y-2 text-sm">
                 <p>
-                  Disahkan oleh {data.validation?.validated_by || "Identitas belum tercatat"} ·{" "}
-                  {data.validation?.validated_by_role || "Peran belum tercatat"}
+                  {isEn ? "Validated by" : "Disahkan oleh"}{" "}
+                  {data.validation?.validated_by || (isEn ? "Identity not recorded" : "Identitas belum tercatat")} ·{" "}
+                  {data.validation?.validated_by_role || (isEn ? "Role not recorded" : "Peran belum tercatat")}
                 </p>
-                <p>{timestamp(data.validation?.validated_at)}</p>
-                <p>Catatan: {data.validation?.validation_notes || "Tidak ada catatan"}</p>
+                <p>{formatTimestamp(data.validation?.validated_at, lang)}</p>
+                <p>
+                  {isEn ? "Notes" : "Catatan"}:{" "}
+                  {data.validation?.validation_notes || (isEn ? "No notes" : "Tidak ada catatan")}
+                </p>
                 <Link className={`${buttonClass} mt-3`} href={query("/export-report", { period: filter.period })}>
-                  Buka Laporan
+                  {isEn ? "Open Report" : "Buka Laporan"}
                 </Link>
               </div>
             ) : (
               <div className="mt-4">
-                {userData?.canValidate ? (
+                {user.data?.canValidate ? (
                   <button
                     type="button"
                     className={buttonClass}
@@ -238,11 +228,13 @@ export default function ValidationPage() {
                       setError(undefined);
                     }}
                   >
-                    Validasi &amp; Kunci Data
+                    {isEn ? "Validate & Lock Data" : "Validasi & Kunci Data"}
                   </button>
                 ) : (
                   <p className="text-sm text-slate-500">
-                    Pengesahan tersedia untuk Manager of Accounting, Tax Manager, dan Director of Finance, Accounting &amp; Digital Transformation.
+                    {isEn
+                      ? "Validation is available for Manager of Accounting, Tax Manager, and Director of Finance, Accounting & Digital Transformation."
+                      : "Pengesahan tersedia untuk Manager of Accounting, Tax Manager, dan Director of Finance, Accounting & Digital Transformation."}
                   </p>
                 )}
               </div>
@@ -251,49 +243,99 @@ export default function ValidationPage() {
 
           <Kpis
             items={[
-              { label: "1. Total Perusahaan", value: number(data.companies.length), detail: "Pelanggan dalam periode" },
-              { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(sum("sum_sub_total")), detail: "Basis perhitungan pajak" },
-              { label: "3. PPN (VAT 11%)", value: money(sum("sum_vat")), detail: "Pajak Pertambahan Nilai" },
-              { label: "4. PPh 23 (2%)", value: money(sum("sum_pph23")), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Lain-lain", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
-              { label: "6. DIP IATA", value: money(sum("sum_dip_iata")), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Kendala",
-                value: detailsLoading ? "Memuat…" : `${number(issueCount)} Kendala`,
-                detail: detailsLoading
-                  ? "Memeriksa transaksi"
+                label: isEn ? "1. Total Companies" : "1. Total Perusahaan",
+                value: number(data.companies.length),
+                detail: isEn ? "Customers in period" : "Pelanggan dalam periode",
+              },
+              {
+                label: isEn ? "2. Tax Base (DPP)" : "2. DPP (Dasar Pengenaan Pajak)",
+                value: money(sum("sum_sub_total")),
+                detail: isEn ? "Tax calculation basis" : "Basis perhitungan pajak",
+              },
+              {
+                label: isEn ? "3. VAT (11%)" : "3. PPN (VAT 11%)",
+                value: money(sum("sum_vat")),
+                detail: isEn ? "Value-Added Tax" : "Pajak Pertambahan Nilai",
+              },
+              {
+                label: isEn ? "4. WHT PPh 23 (2%)" : "4. PPh 23 (2%)",
+                value: money(sum("sum_pph23")),
+                detail: isEn ? "Withheld by customer" : "Dipungut oleh pelanggan",
+              },
+              {
+                label: isEn ? "5. Others" : "5. Lain-lain",
+                value: money(sum("sum_others")),
+                detail: isEn ? "PPh 22 / PPh 26 / other costs" : "PPh 22 / PPh 26 / biaya lain",
+              },
+              {
+                label: "6. DIP IATA",
+                value: money(sum("sum_dip_iata")),
+                detail: isEn ? "IATA organization fees" : "Biaya organisasi IATA",
+              },
+              {
+                label: isEn ? "7. Total Monthly Cost" : "7. Total Biaya Bulanan",
+                value: money(sum("sum_total_cost")),
+                detail: isEn ? "Accumulation of all costs" : "Akumulasi seluruh biaya",
+              },
+              {
+                label: isEn ? "8. Total Issues" : "8. Total Kendala",
+                value: details.loading
+                  ? isEn
+                    ? "Loading…"
+                    : "Memuat…"
+                  : `${number(issueCount)} ${isEn ? "Issues" : "Kendala"}`,
+                detail: details.loading
+                  ? isEn
+                    ? "Checking transactions"
+                    : "Memeriksa transaksi"
                   : issueCount > 0
-                  ? "Terdapat catatan ketidaksesuaian"
+                  ? isEn
+                    ? "Discrepancy notes detected"
+                    : "Terdapat catatan ketidaksesuaian"
+                  : isEn
+                  ? "All transactions valid"
                   : "Seluruh transaksi sesuai",
-                alert: !detailsLoading && issueCount > 0,
+                alert: !details.loading && issueCount > 0,
               },
             ]}
           />
 
-          <Card title="Pemeriksaan Stempel Waktu Bukti Dokumen">
+          <Card
+            title={
+              isEn
+                ? "Document Evidence Timestamp Verification"
+                : "Pemeriksaan Stempel Waktu Bukti Dokumen"
+            }
+          >
             <HistoryTable rows={data.history} />
           </Card>
 
-          <Card title="Jejak Audit Pengesahan">
+          <Card title={isEn ? "Validation Audit Trail" : "Jejak Audit Pengesahan"}>
             <LoadState
-              loading={auditLoading}
+              loading={audit.loading}
               error={audit.error}
               onRetry={audit.reload}
               variant="table-inner"
               rows={3}
             />
-            {!auditLoading && auditData && (
+            {!audit.loading && audit.data && (
               <DataTable
-                rows={auditData}
+                rows={audit.data}
                 rowKey={(row) => row.log_id}
                 columns={[
-                  { label: "Waktu", cell: (row) => timestamp(row.action_timestamp) },
-                  { label: "Pengesah", cell: (row) => row.actor_name || "Belum tercatat" },
-                  { label: "Jabatan", cell: (row) => row.actor_role || "Belum tercatat" },
-                  { label: "Tindakan", cell: (row) => row.action_type },
-                  { label: "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
-                  { label: "Catatan", cell: (row) => row.validation_notes || "—" },
+                  { label: isEn ? "Time" : "Waktu", cell: (row) => formatTimestamp(row.action_timestamp, lang) },
+                  {
+                    label: isEn ? "Validator" : "Pengesah",
+                    cell: (row) => row.actor_name || (isEn ? "Not recorded" : "Belum tercatat"),
+                  },
+                  {
+                    label: isEn ? "Role" : "Jabatan",
+                    cell: (row) => row.actor_role || (isEn ? "Not recorded" : "Belum tercatat"),
+                  },
+                  { label: isEn ? "Action" : "Tindakan", cell: (row) => row.action_type },
+                  { label: isEn ? "Total Cost" : "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
+                  { label: isEn ? "Notes" : "Catatan", cell: (row) => row.validation_notes || "—" },
                 ]}
               />
             )}
@@ -303,16 +345,21 @@ export default function ValidationPage() {
 
       {confirm && data && (
         <Modal
-          title={`Validasi & Kunci Data · ${filter.period}`}
+          title={`${isEn ? "Validate & Lock Data" : "Validasi & Kunci Data"} · ${periodLabel}`}
           onClose={() => setConfirm(false)}
           busy={busy}
         >
           <Notice>
-            Setelah disahkan, rincian biaya, bukti dokumen, dan status periode ini tidak dapat diubah. Total biaya yang diperiksa:{" "}
-            {money(sum("sum_total_cost"))} ({issueCount} kendala terdeteksi).
+            {isEn
+              ? `Once validated, cost details, document evidence, and the status of this period cannot be modified. Total reviewed cost: ${money(
+                  sum("sum_total_cost")
+                )} (${issueCount} issues detected).`
+              : `Setelah disahkan, rincian biaya, bukti dokumen, dan status periode ini tidak dapat diubah. Total biaya yang diperiksa: ${money(
+                  sum("sum_total_cost")
+                )} (${issueCount} kendala terdeteksi).`}
           </Notice>
           <label className="block text-sm font-medium">
-            Catatan pengesahan
+            {isEn ? "Validation notes" : "Catatan pengesahan"}
             <textarea
               className={`${fieldClass} mt-2`}
               rows={4}
@@ -329,7 +376,7 @@ export default function ValidationPage() {
               disabled={busy}
               onClick={() => setConfirm(false)}
             >
-              Kembali
+              {isEn ? "Back" : "Kembali"}
             </button>
             <button
               type="button"
@@ -337,7 +384,13 @@ export default function ValidationPage() {
               disabled={busy || !notes.trim()}
               onClick={() => void lock()}
             >
-              {busy ? "Mengesahkan…" : "Validasi & Kunci Data"}
+              {busy
+                ? isEn
+                  ? "Validating…"
+                  : "Mengesahkan…"
+                : isEn
+                ? "Validate & Lock Data"
+                : "Validasi & Kunci Data"}
             </button>
           </div>
         </Modal>

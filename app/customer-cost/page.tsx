@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Workspace,
   Filters,
@@ -23,18 +23,23 @@ import {
   usePeriod,
   type CustomerData,
 } from "@/lib/c2-client";
-
-// Cache ringan per periode agar perpindahan halaman/periode tampil instan
-const customerCostCache = new Map<string, CustomerData>();
+import { formatPeriodLabel, useLang } from "@/lib/c2-i18n";
 
 function CustomerCostSkeleton() {
+  const { isEn } = useLang();
   return (
     <>
       <LoadState loading variant="cards" />
-      <Card title="Rincian per Perusahaan (Mode Baca)">
+      <Card title={isEn ? "Breakdown per Company (Read-Only)" : "Rincian per Perusahaan (Mode Baca)"}>
         <LoadState loading variant="table-inner" rows={5} />
       </Card>
-      <Card title="Rincian Transaksi Laporan Penjualan Perusahaan">
+      <Card
+        title={
+          isEn
+            ? "Company Sales Report Transaction Details"
+            : "Rincian Transaksi Laporan Penjualan Perusahaan"
+        }
+      >
         <LoadState loading variant="table-inner" rows={6} />
       </Card>
     </>
@@ -42,6 +47,7 @@ function CustomerCostSkeleton() {
 }
 
 export default function CustomerCostPage() {
+  const { lang, isEn } = useLang();
   const filter = usePeriod();
   const [company, setCompany] = useFilter("company");
   const [detail, setDetail] = useState<string | null>(null);
@@ -50,15 +56,8 @@ export default function CustomerCostPage() {
     filter.period ? query("/api/v1/cost-analytics/customers", { period: filter.period, company: "ALL" }) : null
   );
 
-  useEffect(() => {
-    if (filter.period && all.data) {
-      customerCostCache.set(filter.period, all.data);
-    }
-  }, [filter.period, all.data]);
-
-  const data = all.data ?? (filter.period ? customerCostCache.get(filter.period) : undefined);
-  const isLoading = !data && (filter.loading || all.loading);
-  const isRefreshing = filter.loading || all.loading;
+  const data = all.data;
+  const isLoading = filter.loading || all.loading;
   const loadError = filter.error || all.error;
 
   const allCompanies = useMemo(() => data?.companies ?? [], [data?.companies]);
@@ -83,7 +82,7 @@ export default function CustomerCostPage() {
     <Workspace title="" description="">
       <Filters
         {...filter}
-        loading={isRefreshing}
+        loading={isLoading}
         onPeriod={(value) => {
           filter.setPeriod(value);
           setDetail(null);
@@ -103,40 +102,86 @@ export default function CustomerCostPage() {
       {!isLoading && loadError && <LoadState loading={false} error={loadError} onRetry={all.reload} />}
       {isLoading && !loadError && <CustomerCostSkeleton />}
 
-      {!isLoading && !filter.period && !loadError && <Notice>Belum ada data biaya bulanan.</Notice>}
+      {!isLoading && !filter.period && !loadError && (
+        <Notice>{isEn ? "No monthly cost data available yet." : "Belum ada data biaya bulanan."}</Notice>
+      )}
 
       {!isLoading && !loadError && data && (
         <>
           <Kpis
             items={[
-              { label: "1. Total Perusahaan", value: number(rows.length), detail: "Pelanggan aktif periode ini" },
-              { label: "2. DPP (Dasar Pengenaan Pajak)", value: money(sum("sum_sub_total")), detail: "Basis perhitungan pajak" },
-              { label: "3. PPN (VAT 11%)", value: money(sum("sum_vat")), detail: "Pajak Pertambahan Nilai" },
-              { label: "4. PPh 23 (2%)", value: money(sum("sum_pph23")), detail: "Dipungut oleh pelanggan" },
-              { label: "5. Lain-lain", value: money(sum("sum_others")), detail: "PPh 22 / PPh 26 / biaya lain" },
-              { label: "6. DIP IATA", value: money(sum("sum_dip_iata")), detail: "Biaya organisasi IATA" },
-              { label: "7. Total Biaya Bulanan", value: money(sum("sum_total_cost")), detail: "Akumulasi seluruh biaya" },
               {
-                label: "8. Total Kendala",
-                value: `${number(issueCount)} Kendala`,
-                detail: issueCount > 0 ? "Perlu pemeriksaan pada rincian" : "Seluruh transaksi sesuai",
+                label: isEn ? "1. Total Companies" : "1. Total Perusahaan",
+                value: number(rows.length),
+                detail: isEn ? "Active customers this period" : "Pelanggan aktif periode ini",
+              },
+              {
+                label: isEn ? "2. Tax Base (DPP)" : "2. DPP (Dasar Pengenaan Pajak)",
+                value: money(sum("sum_sub_total")),
+                detail: isEn ? "Tax calculation basis" : "Basis perhitungan pajak",
+              },
+              {
+                label: isEn ? "3. VAT (11%)" : "3. PPN (VAT 11%)",
+                value: money(sum("sum_vat")),
+                detail: isEn ? "Value-Added Tax" : "Pajak Pertambahan Nilai",
+              },
+              {
+                label: isEn ? "4. WHT PPh 23 (2%)" : "4. PPh 23 (2%)",
+                value: money(sum("sum_pph23")),
+                detail: isEn ? "Withheld by customer" : "Dipungut oleh pelanggan",
+              },
+              {
+                label: isEn ? "5. Others" : "5. Lain-lain",
+                value: money(sum("sum_others")),
+                detail: isEn ? "PPh 22 / PPh 26 / other costs" : "PPh 22 / PPh 26 / biaya lain",
+              },
+              {
+                label: "6. DIP IATA",
+                value: money(sum("sum_dip_iata")),
+                detail: isEn ? "IATA organization fees" : "Biaya organisasi IATA",
+              },
+              {
+                label: isEn ? "7. Total Monthly Cost" : "7. Total Biaya Bulanan",
+                value: money(sum("sum_total_cost")),
+                detail: isEn ? "Accumulation of all costs" : "Akumulasi seluruh biaya",
+              },
+              {
+                label: isEn ? "8. Total Issues" : "8. Total Kendala",
+                value: `${number(issueCount)} ${isEn ? "Issues" : "Kendala"}`,
+                detail:
+                  issueCount > 0
+                    ? isEn
+                      ? "Review required in details"
+                      : "Perlu pemeriksaan pada rincian"
+                    : isEn
+                    ? "All transactions valid"
+                    : "Seluruh transaksi sesuai",
                 alert: issueCount > 0,
               },
             ]}
           />
 
-          <Card title="Rincian per Perusahaan (Mode Baca)">
+          <Card title={isEn ? "Breakdown per Company (Read-Only)" : "Rincian per Perusahaan (Mode Baca)"}>
             <SummaryTable rows={rows} detail={(row) => setDetail(row.company_name)} />
           </Card>
 
-          <Card title="Rincian Transaksi Laporan Penjualan Perusahaan">
+          <Card
+            title={
+              isEn
+                ? "Company Sales Report Transaction Details"
+                : "Rincian Transaksi Laporan Penjualan Perusahaan"
+            }
+          >
             <SalesTable records={records} />
           </Card>
         </>
       )}
 
       {detail && data && (
-        <Modal title={`${detail} · ${filter.period}`} onClose={() => setDetail(null)}>
+        <Modal
+          title={`${detail} · ${formatPeriodLabel(filter.period, lang)}`}
+          onClose={() => setDetail(null)}
+        >
           <SalesTable records={records.filter((row) => row.company_name === detail)} />
         </Modal>
       )}

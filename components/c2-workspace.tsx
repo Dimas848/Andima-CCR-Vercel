@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { RefreshCw, Search, X } from "lucide-react";
 import Sidebar from "@/components/sidebar";
-import { amount, money, number, timestamp, type Evidence, type MonthlySummary, type SalesRecord } from "@/lib/c2-client";
+import { amount, money, number, type Evidence, type MonthlySummary, type SalesRecord } from "@/lib/c2-client";
+import { formatPeriodLabel, formatTimestamp, useLang, type Lang } from "@/lib/c2-i18n";
 
 export const buttonClass =
   "inline-flex items-center justify-center gap-2 rounded-lg bg-[#087ebd] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#07689c] disabled:cursor-not-allowed disabled:opacity-50";
@@ -13,7 +14,8 @@ export const secondaryClass =
 export const fieldClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:outline-2 focus:outline-sky-600 disabled:bg-slate-100";
 
-export function getRecordIssues(row: SalesRecord): string[] {
+export function getRecordIssues(row: SalesRecord, lang: Lang = "id"): string[] {
+  const isEn = lang === "en";
   const issues: string[] = [];
   const dpp = amount(row.sub_total);
   const vat = amount(row.vat_amount);
@@ -22,11 +24,11 @@ export function getRecordIssues(row: SalesRecord): string[] {
   const iata = amount(row.dip_iata_cost);
   const total = amount(row.total_cost);
 
-  if (dpp <= 0) issues.push("DPP bernilai 0 atau negatif");
-  if (iata > 0) issues.push("Terdapat tagihan DIP IATA (seharusnya 0 untuk Andima)");
+  if (dpp <= 0) issues.push(isEn ? "Tax base (DPP) is 0 or negative" : "DPP bernilai 0 atau negatif");
+  if (iata > 0) issues.push(isEn ? "DIP IATA charge detected (should be 0 for Andima)" : "Terdapat tagihan DIP IATA (seharusnya 0 untuk Andima)");
   const expectedTotal = dpp + vat + pph23 + others + iata;
   if (Math.abs(total - expectedTotal) > 100) {
-    issues.push("Total Biaya tidak sesuai penjumlahan komponen");
+    issues.push(isEn ? "Total Cost does not match component sum" : "Total Biaya tidak sesuai penjumlahan komponen");
   }
   return issues;
 }
@@ -161,12 +163,14 @@ export function Skeleton({
   variant?: SkeletonVariant;
   rows?: number;
 }) {
+  const { isEn } = useLang();
+
   if (variant === "table-inner") {
     return (
       <div
         role="status"
         aria-busy="true"
-        aria-label="Memuat data"
+        aria-label={isEn ? "Loading data" : "Memuat data"}
         className="animate-[pulse_0.85s_ease-in-out_infinite]"
       >
         <TableInnerSkeleton rows={rows} />
@@ -178,7 +182,7 @@ export function Skeleton({
     <div
       role="status"
       aria-busy="true"
-      aria-label="Memuat data"
+      aria-label={isEn ? "Loading data" : "Memuat data"}
       className="space-y-6 animate-[pulse_0.85s_ease-in-out_infinite]"
     >
       {variant === "evidence" && (
@@ -272,18 +276,19 @@ export function LoadState({
   variant?: SkeletonVariant;
   rows?: number;
 }) {
+  const { isEn } = useLang();
   if (error) {
     return (
       <Notice error>
         {error}
         {onRetry && (
           <button type="button" className="ml-3 underline" onClick={onRetry}>
-            Coba lagi
+            {isEn ? "Retry" : "Coba lagi"}
           </button>
         )}
         {/sesi|login|authenticated/i.test(error) && (
           <Link className="ml-3 underline" href="/login">
-            Masuk
+            {isEn ? "Sign in" : "Masuk"}
           </Link>
         )}
       </Notice>
@@ -309,6 +314,7 @@ function SearchCombobox({
   onChange: (value: string) => void;
   className?: string;
 }) {
+  const { isEn } = useLang();
   const inputId = useId();
   const boxRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -372,7 +378,7 @@ function SearchCombobox({
         {(isFiltered || (open && searchText)) && (
           <button
             type="button"
-            aria-label={`Reset filter ${label.toLowerCase()}`}
+            aria-label={isEn ? `Reset ${label.toLowerCase()} filter` : `Reset filter ${label.toLowerCase()}`}
             onClick={() => {
               onChange("ALL");
               setSearchText("");
@@ -428,7 +434,9 @@ function SearchCombobox({
 
           {filtered.length === 0 && (
             <p className="px-3.5 py-3 text-center text-xs text-slate-500">
-              {emptyLabel} &ldquo;{searchText}&rdquo; tidak ditemukan.
+              {isEn
+                ? `${emptyLabel} "${searchText}" not found.`
+                : `${emptyLabel} "${searchText}" tidak ditemukan.`}
             </p>
           )}
         </div>
@@ -462,6 +470,7 @@ export function Filters({
   refresh?: () => void;
   loading?: boolean;
 }) {
+  const { lang, isEn } = useLang();
   const options = [...new Set([period, ...periods].filter(Boolean))];
   const companyOptions = [...new Map((companies ?? []).map((row) => [row.company_name, row])).values()].map(
     (row) => ({
@@ -480,7 +489,7 @@ export function Filters({
   return (
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-4">
       <label className="min-w-44 flex-1 text-xs font-semibold text-slate-600">
-        Periode
+        {isEn ? "Period" : "Periode"}
         <select
           className={`${fieldClass} mt-1.5 h-[42px]`}
           value={period}
@@ -488,20 +497,28 @@ export function Filters({
           onChange={(event) => onPeriod(event.target.value)}
         >
           <option value="" disabled>
-            {loading && !options.length ? "Memuat periode…" : "Pilih periode"}
+            {loading && !options.length
+              ? isEn
+                ? "Loading periods…"
+                : "Memuat periode…"
+              : isEn
+              ? "Select period"
+              : "Pilih periode"}
           </option>
           {options.map((value) => (
-            <option key={value}>{value}</option>
+            <option key={value} value={value}>
+              {formatPeriodLabel(value, lang)}
+            </option>
           ))}
         </select>
       </label>
 
       {onCompany && (
         <SearchCombobox
-          label="Perusahaan"
+          label={isEn ? "Company" : "Perusahaan"}
           value={company ?? "ALL"}
-          allLabel="Semua perusahaan"
-          emptyLabel="Perusahaan"
+          allLabel={isEn ? "All companies" : "Semua perusahaan"}
+          emptyLabel={isEn ? "Company" : "Perusahaan"}
           options={companyOptions}
           onChange={onCompany}
           className="min-w-44 flex-1"
@@ -510,10 +527,10 @@ export function Filters({
 
       {onDest && (
         <SearchCombobox
-          label="Kota / destinasi"
+          label={isEn ? "City / Destination" : "Kota / destinasi"}
           value={dest ?? "ALL"}
-          allLabel="Semua destinasi"
-          emptyLabel="Destinasi"
+          allLabel={isEn ? "All destinations" : "Semua destinasi"}
+          emptyLabel={isEn ? "Destination" : "Destinasi"}
           options={destOptions}
           onChange={onDest}
           className="min-w-44 flex-1"
@@ -522,7 +539,7 @@ export function Filters({
 
       {refresh && (
         <button type="button" onClick={refresh} className={`${secondaryClass} h-[42px]`}>
-          <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> Muat ulang
+          <RefreshCw size={15} className={loading ? "animate-spin" : ""} /> {isEn ? "Refresh" : "Muat ulang"}
         </button>
       )}
     </div>
@@ -553,13 +570,20 @@ export function Kpis({ items }: { items: { label: string; value: ReactNode; deta
 }
 
 export function Status({ validated }: { validated: boolean }) {
+  const { isEn } = useLang();
   return (
     <span
       className={`inline-block rounded-full px-3 py-1 text-xs font-semibold ${
         validated ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
       }`}
     >
-      {validated ? "Disahkan / Terkunci" : "Terbuka"}
+      {validated
+        ? isEn
+          ? "Validated / Locked"
+          : "Disahkan / Terkunci"
+        : isEn
+        ? "Open"
+        : "Terbuka"}
     </span>
   );
 }
@@ -569,16 +593,19 @@ export function DataTable<T>({
   rows,
   columns,
   rowKey,
-  empty = "Belum ada data untuk filter ini.",
+  empty,
 }: {
   rows: T[];
   columns: Column<T>[];
   rowKey: (row: T, index: number) => string;
   empty?: string;
 }) {
+  const { isEn } = useLang();
   const [page, setPage] = useState(1);
   const pages = Math.max(1, Math.ceil(rows.length / 15));
   const active = Math.min(page, pages);
+  const emptyText = empty ?? (isEn ? "No data available for this filter." : "Belum ada data untuk filter ini.");
+
   return (
     <>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -612,7 +639,7 @@ export function DataTable<T>({
             {!rows.length && (
               <tr>
                 <td colSpan={columns.length} className="py-10 text-center text-slate-500">
-                  {empty}
+                  {emptyText}
                 </td>
               </tr>
             )}
@@ -622,11 +649,13 @@ export function DataTable<T>({
       {rows.length > 15 && (
         <div className="mt-3 flex items-center justify-between gap-3 text-xs text-slate-500">
           <span>
-            {rows.length} baris · Halaman {active} dari {pages}
+            {isEn
+              ? `${rows.length} rows · Page ${active} of ${pages}`
+              : `${rows.length} baris · Halaman ${active} dari ${pages}`}
           </span>
           <div className="flex gap-2">
             <button type="button" className={secondaryClass} disabled={active === 1} onClick={() => setPage(active - 1)}>
-              Sebelumnya
+              {isEn ? "Previous" : "Sebelumnya"}
             </button>
             <button
               type="button"
@@ -634,7 +663,7 @@ export function DataTable<T>({
               disabled={active === pages}
               onClick={() => setPage(active + 1)}
             >
-              Berikutnya
+              {isEn ? "Next" : "Berikutnya"}
             </button>
           </div>
         </div>
@@ -643,53 +672,55 @@ export function DataTable<T>({
   );
 }
 
-export const salesColumns: Column<SalesRecord>[] = [
-  { label: "Periode", cell: (row) => row.periode },
-  { label: "Nomor Job", cell: (row) => row.job_number },
-  { label: "Perusahaan", cell: (row) => row.company_name },
-  { label: "No. MAWB", cell: (row) => row.mawb_no },
-  { label: "CW", cell: (row) => number(row.cw), numeric: true },
-  { label: "Tujuan", cell: (row) => row.dest },
-  { label: "DPP (Dasar Pajak)", cell: (row) => money(row.sub_total), numeric: true },
-  { label: "PPN (VAT 11%)", cell: (row) => money(row.vat_amount), numeric: true },
-  { label: "PPh 23 (2%)", cell: (row) => money(row.pph23_amount), numeric: true },
-  { label: "Lain-lain", cell: (row) => money(row.others_cost), numeric: true },
-  { label: "DIP IATA", cell: (row) => money(row.dip_iata_cost), numeric: true },
-  { label: "Total Biaya", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
-  {
-    label: "Kendala",
-    cell: (row) => {
-      const issues = getRecordIssues(row);
-      return issues.length === 0 ? (
-        <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
-          0 Kendala
-        </span>
-      ) : (
-        <span
-          title={issues.join(", ")}
-          className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800"
-        >
-          {issues.length} Kendala ({issues[0]})
-        </span>
-      );
-    },
-  },
-];
-
 export function SalesTable({ records }: { records: SalesRecord[] }) {
+  const { lang, isEn } = useLang();
+  const columns: Column<SalesRecord>[] = [
+    { label: isEn ? "Period" : "Periode", cell: (row) => formatPeriodLabel(row.periode, lang) },
+    { label: isEn ? "Job Number" : "Nomor Job", cell: (row) => row.job_number },
+    { label: isEn ? "Company" : "Perusahaan", cell: (row) => row.company_name },
+    { label: isEn ? "MAWB No." : "No. MAWB", cell: (row) => row.mawb_no },
+    { label: "CW", cell: (row) => number(row.cw), numeric: true },
+    { label: isEn ? "Destination" : "Tujuan", cell: (row) => row.dest },
+    { label: isEn ? "Tax Base (Sub Total)" : "DPP (Dasar Pajak)", cell: (row) => money(row.sub_total), numeric: true },
+    { label: isEn ? "VAT (11%)" : "PPN (VAT 11%)", cell: (row) => money(row.vat_amount), numeric: true },
+    { label: isEn ? "WHT PPh 23 (2%)" : "PPh 23 (2%)", cell: (row) => money(row.pph23_amount), numeric: true },
+    { label: isEn ? "Others" : "Lain-lain", cell: (row) => money(row.others_cost), numeric: true },
+    { label: "DIP IATA", cell: (row) => money(row.dip_iata_cost), numeric: true },
+    { label: isEn ? "Total Cost" : "Total Biaya", cell: (row) => <strong>{money(row.total_cost)}</strong>, numeric: true },
+    {
+      label: isEn ? "Issues" : "Kendala",
+      cell: (row) => {
+        const issues = getRecordIssues(row, lang);
+        return issues.length === 0 ? (
+          <span className="inline-block rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
+            {isEn ? "0 Issues" : "0 Kendala"}
+          </span>
+        ) : (
+          <span
+            title={issues.join(", ")}
+            className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800"
+          >
+            {issues.length} {isEn ? "Issues" : "Kendala"} ({issues[0]})
+          </span>
+        );
+      },
+    },
+  ];
+
   return (
     <DataTable
       rows={records}
-      columns={salesColumns}
+      columns={columns}
       rowKey={(row, index) => row.record_id ?? `${row.job_number}-${index}`}
     />
   );
 }
 
 export function SummaryTable({ rows, detail }: { rows: MonthlySummary[]; detail?: (row: MonthlySummary) => void }) {
+  const { isEn } = useLang();
   const columns: Column<MonthlySummary>[] = [
     {
-      label: "Perusahaan",
+      label: isEn ? "Company" : "Perusahaan",
       cell: (row) => (
         <>
           <span className="text-xs font-semibold text-sky-700">{row.customer_code}</span>
@@ -698,20 +729,20 @@ export function SummaryTable({ rows, detail }: { rows: MonthlySummary[]; detail?
       ),
     },
     { label: "Job", cell: (row) => number(row.total_jobs_count), numeric: true },
-    { label: "DPP (Dasar Pajak)", cell: (row) => money(row.sum_sub_total), numeric: true },
-    { label: "PPN (VAT 11%)", cell: (row) => money(row.sum_vat), numeric: true },
-    { label: "PPh 23 (2%)", cell: (row) => money(row.sum_pph23), numeric: true },
-    { label: "Lain-lain", cell: (row) => money(row.sum_others), numeric: true },
+    { label: isEn ? "Tax Base (Sub Total)" : "DPP (Dasar Pajak)", cell: (row) => money(row.sum_sub_total), numeric: true },
+    { label: isEn ? "VAT (11%)" : "PPN (VAT 11%)", cell: (row) => money(row.sum_vat), numeric: true },
+    { label: isEn ? "WHT PPh 23 (2%)" : "PPh 23 (2%)", cell: (row) => money(row.sum_pph23), numeric: true },
+    { label: isEn ? "Others" : "Lain-lain", cell: (row) => money(row.sum_others), numeric: true },
     { label: "DIP IATA", cell: (row) => money(row.sum_dip_iata), numeric: true },
-    { label: "Total Biaya", cell: (row) => <strong>{money(row.sum_total_cost)}</strong>, numeric: true },
-    { label: "Porsi Periode", cell: (row) => `${number(row.company_share_pct)}%`, numeric: true },
+    { label: isEn ? "Total Cost" : "Total Biaya", cell: (row) => <strong>{money(row.sum_total_cost)}</strong>, numeric: true },
+    { label: isEn ? "Period Share" : "Porsi Periode", cell: (row) => `${number(row.company_share_pct)}%`, numeric: true },
   ];
   if (detail) {
     columns.push({
-      label: "Rincian",
+      label: isEn ? "Details" : "Rincian",
       cell: (row) => (
         <button type="button" className="font-semibold text-sky-700 underline" onClick={() => detail(row)}>
-          Lihat rincian
+          {isEn ? "View details" : "Lihat rincian"}
         </button>
       ),
     });
@@ -728,38 +759,41 @@ export function HistoryTable({
   onPreview?: (row: Evidence) => void;
   onDelete?: (row: Evidence) => void;
 }) {
+  const { lang, isEn } = useLang();
   const columns: Column<Evidence>[] = [
-    { label: "Dokumen", cell: (row) => <span className="break-all font-medium">{row.file_name}</span> },
-    { label: "Periode", cell: (row) => row.period_month },
+    { label: isEn ? "Document" : "Dokumen", cell: (row) => <span className="break-all font-medium">{row.file_name}</span> },
+    { label: isEn ? "Period" : "Periode", cell: (row) => formatPeriodLabel(row.period_month, lang) },
     {
-      label: "Waktu Unggah",
+      label: isEn ? "Upload Time" : "Waktu Unggah",
       cell: (row) => (
         <time dateTime={row.uploaded_at} title={row.uploaded_at}>
-          {timestamp(row.uploaded_at)}
+          {formatTimestamp(row.uploaded_at, lang)}
         </time>
       ),
     },
     {
-      label: "Diunggah Oleh",
+      label: isEn ? "Uploaded By" : "Diunggah Oleh",
       cell: (row) => (
         <>
-          {row.uploaded_by_name || "Belum tercatat"}
-          <p className="text-xs text-slate-500">{row.uploaded_by_role || "Peran belum tercatat"}</p>
+          {row.uploaded_by_name || (isEn ? "Not recorded" : "Belum tercatat")}
+          <p className="text-xs text-slate-500">
+            {row.uploaded_by_role || (isEn ? "Role not recorded" : "Peran belum tercatat")}
+          </p>
         </>
       ),
     },
-    { label: "Baris", cell: (row) => number(row.total_rows), numeric: true },
-    { label: "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
+    { label: isEn ? "Rows" : "Baris", cell: (row) => number(row.total_rows), numeric: true },
+    { label: isEn ? "Total Cost" : "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
     { label: "Status", cell: (row) => row.status },
   ];
   if (onPreview || onDelete) {
     columns.push({
-      label: "Tindakan",
+      label: isEn ? "Action" : "Tindakan",
       cell: (row) => (
         <div className="flex gap-3">
           {onPreview && (
             <button type="button" className="text-sky-700 underline" onClick={() => onPreview(row)}>
-              Pratinjau
+              {isEn ? "Preview" : "Pratinjau"}
             </button>
           )}
           {onDelete && (
@@ -769,7 +803,7 @@ export function HistoryTable({
               className="text-red-700 underline disabled:cursor-not-allowed disabled:text-slate-400"
               onClick={() => onDelete(row)}
             >
-              Hapus
+              {isEn ? "Delete" : "Hapus"}
             </button>
           )}
         </div>
@@ -790,6 +824,7 @@ export function Modal({
   onClose: () => void;
   busy?: boolean;
 }) {
+  const { isEn } = useLang();
   const dialog = useRef<HTMLDialogElement>(null);
   const id = useId();
   useEffect(() => {
@@ -811,7 +846,13 @@ export function Modal({
         <h2 id={id} className="text-lg font-bold">
           {title}
         </h2>
-        <button type="button" className={secondaryClass} onClick={onClose} disabled={busy} aria-label="Tutup">
+        <button
+          type="button"
+          className={secondaryClass}
+          onClick={onClose}
+          disabled={busy}
+          aria-label={isEn ? "Close" : "Tutup"}
+        >
           <X size={18} />
         </button>
       </div>
