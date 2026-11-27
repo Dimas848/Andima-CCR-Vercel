@@ -14,6 +14,23 @@ export const secondaryClass =
 export const fieldClass =
   "w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 focus:outline-2 focus:outline-sky-600 disabled:bg-slate-100";
 
+function formatEvidenceStatus(status: string, isEn: boolean): string {
+  const normalized = (status ?? "").trim().toUpperCase();
+  if (normalized === "VALIDATED" || normalized === "TERVALIDASI") {
+    return isEn ? "Validated" : "Tervalidasi";
+  }
+  if (normalized === "PENDING" || normalized === "MENUNGGU") {
+    return isEn ? "Pending" : "Menunggu";
+  }
+  if (normalized === "OPEN" || normalized === "TERBUKA") {
+    return isEn ? "Open" : "Terbuka";
+  }
+  if (normalized === "COMPLETED" || normalized === "SELESAI") {
+    return isEn ? "Completed" : "Selesai";
+  }
+  return status;
+}
+
 export function getRecordIssues(row: SalesRecord, lang: Lang = "id"): string[] {
   const isEn = lang === "en";
   const issues: string[] = [];
@@ -784,7 +801,7 @@ export function HistoryTable({
     },
     { label: isEn ? "Rows" : "Baris", cell: (row) => number(row.total_rows), numeric: true },
     { label: isEn ? "Total Cost" : "Total Biaya", cell: (row) => money(row.total_cost_amount), numeric: true },
-    { label: "Status", cell: (row) => row.status },
+    { label: "Status", cell: (row) => formatEvidenceStatus(row.status, isEn) },
   ];
   if (onPreview || onDelete) {
     columns.push({
@@ -799,7 +816,7 @@ export function HistoryTable({
           {onDelete && (
             <button
               type="button"
-              disabled={row.is_validated || row.status.toUpperCase() === "VALIDATED"}
+              disabled={row.is_validated || ["VALIDATED", "TERVALIDASI"].includes((row.status ?? "").trim().toUpperCase())}
               className="text-red-700 underline disabled:cursor-not-allowed disabled:text-slate-400"
               onClick={() => onDelete(row)}
             >
