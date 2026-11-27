@@ -236,7 +236,7 @@ export default function DataUploadPage() {
 
   useEffect(() => {
     if (!toastLines) return;
-    const timer = window.setTimeout(() => setToastLines(null), 300);
+    const timer = window.setTimeout(() => setToastLines(null), 2000);
     return () => window.clearTimeout(timer);
   }, [toastLines]);
 

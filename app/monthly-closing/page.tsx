@@ -105,7 +105,7 @@ export default function ValidationPage() {
 
   useEffect(() => {
     if (!successPeriod) return;
-    const timer = window.setTimeout(() => setSuccessPeriod(null), 5000);
+    const timer = window.setTimeout(() => setSuccessPeriod(null), 2000);
     return () => window.clearTimeout(timer);
   }, [successPeriod]);
 
